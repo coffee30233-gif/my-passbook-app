@@ -668,36 +668,6 @@ export default function App() {
     if (ledgerPage > ledgerTotalPages - 1) setLedgerPage(Math.max(0, ledgerTotalPages - 1));
   }, [ledgerTotalPages, ledgerPage]);
 
-  /* 修正手機瀏覽器 / PWA 模式下 100dvh 算不準的問題：改用 JS 實際量測可視高度 */
-  useEffect(() => {
-    function setAppHeight() {
-      const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-      document.documentElement.style.setProperty("--app-vh", `${h * 0.01}px`);
-    }
-    function handleVisibilityRecalc() {
-      if (!document.hidden) {
-        // 延遲一下再量，等系統畫面（例如 Face ID 授權、相機）完全關閉、視窗尺寸穩定後再抓
-        setTimeout(setAppHeight, 50);
-        setTimeout(setAppHeight, 300);
-      }
-    }
-    setAppHeight();
-    window.addEventListener("resize", setAppHeight);
-    window.addEventListener("orientationchange", setAppHeight);
-    window.addEventListener("pageshow", setAppHeight);
-    window.addEventListener("focus", setAppHeight);
-    document.addEventListener("visibilitychange", handleVisibilityRecalc);
-    if (window.visualViewport) window.visualViewport.addEventListener("resize", setAppHeight);
-    return () => {
-      window.removeEventListener("resize", setAppHeight);
-      window.removeEventListener("orientationchange", setAppHeight);
-      window.removeEventListener("pageshow", setAppHeight);
-      window.removeEventListener("focus", setAppHeight);
-      document.removeEventListener("visibilitychange", handleVisibilityRecalc);
-      if (window.visualViewport) window.visualViewport.removeEventListener("resize", setAppHeight);
-    };
-  }, []);
-
   useEffect(() => {
     if (showAssistant && chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -1662,18 +1632,14 @@ export default function App() {
           .fp-root {
             padding: 0;
             background: var(--paper);
-            min-height: 100vh;
-            min-height: 100dvh;
-            min-height: calc(var(--app-vh, 1vh) * 100);
+            height: 100%;
           }
           .fp-phone {
             max-width: 100%;
             border-radius: 0;
             border: none;
             box-shadow: none;
-            height: 100vh;
-            height: 100dvh;
-            height: calc(var(--app-vh, 1vh) * 100);
+            height: 100%;
           }
         }
         .fp-mono { font-family: 'JetBrains Mono', monospace; }
