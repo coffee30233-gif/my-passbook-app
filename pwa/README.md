@@ -34,12 +34,14 @@
 
 如果你想繼續使用「AI 辨識帳單」和「財務小幫手」：
 
-1. 到 [console.anthropic.com](https://console.anthropic.com) 申請一組 API 金鑰
+這個專案的 AI 功能是接 **Google Gemini API**，免費額度足夠個人記帳這種低頻使用，長期使用基本上不用付錢（跟 Anthropic 的 API 不同，Gemini 免費額度是每天重置，不是一次用完就沒有）。
+
+1. 到 [aistudio.google.com](https://aistudio.google.com) 用 Google 帳號登入，點「Get API key」→「Create API key」，**不需要綁信用卡**
 2. 回到 Vercel，進入你的專案 →「Settings」→「Environment Variables」
-3. 新增一筆：Name 填 `ANTHROPIC_API_KEY`，Value 貼上你的金鑰，Save
+3. 新增一筆：Name 填 `GEMINI_API_KEY`，Value 貼上你的金鑰，Save
 4. 回到「Deployments」分頁，把最新的部署重新 Deploy 一次（讓新的環境變數生效）
 
-如果不設定這組金鑰，App 其他功能都正常，只有這兩個 AI 功能會顯示連線失敗的訊息。
+免費額度大概是每天 250 次請求上下（依 Google 當時的方案而定），對個人記帳來說非常夠用。如果不設定這組金鑰，App 其他功能都正常，只有這兩個 AI 功能會顯示連線失敗的訊息，訊息裡會直接告訴你是缺金鑰還是其他原因。
 
 ## 步驟四：在 iPhone 上加到主畫面
 
@@ -70,6 +72,6 @@
 │   ├── App.jsx           整個 App 的邏輯與畫面（就是原本的記帳 App）
 │   └── storage.js        本機資料儲存（localStorage）
 ├── api/
-│   └── claude.js         安全代理 Anthropic API 的伺服器端函式
+│   └── gemini.js         安全代理 Google Gemini API 的伺服器端函式
 └── public/icons/         App 圖示
 ```
