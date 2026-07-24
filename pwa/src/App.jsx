@@ -539,7 +539,11 @@ export default function App() {
         }),
       });
 
-      if (!response.ok) throw new Error(`API 回應錯誤（${response.status}）`);
+      if (!response.ok) {
+        let detail = "";
+        try { detail = JSON.stringify(await response.json()).slice(0, 200); } catch (e2) { /* ignore */ }
+        throw new Error(`API 回應錯誤（${response.status}）${detail ? "：" + detail : ""}`);
+      }
       const data = await response.json();
       const textBlock = (data.content || []).find((b) => b.type === "text");
       if (!textBlock) throw new Error("沒有收到辨識結果");
@@ -561,7 +565,7 @@ export default function App() {
         setAiCandidates(candidates);
       }
     } catch (e) {
-      setAiError("AI 辨識失敗，請確認網路連線後再試一次，或改用手動輸入");
+      setAiError(`AI 辨識失敗：${e.message || "未知錯誤"}`);
     } finally {
       setAiLoading(false);
     }
@@ -951,13 +955,17 @@ export default function App() {
           messages: history.map((m) => ({ role: m.role, content: m.text })),
         }),
       });
-      if (!response.ok) throw new Error(`API 回應錯誤（${response.status}）`);
+      if (!response.ok) {
+        let detail = "";
+        try { detail = JSON.stringify(await response.json()).slice(0, 200); } catch (e2) { /* ignore */ }
+        throw new Error(`API 回應錯誤（${response.status}）${detail ? "：" + detail : ""}`);
+      }
       const data = await response.json();
       const textBlock = (data.content || []).find((b) => b.type === "text");
       const replyText = textBlock ? textBlock.text : "（沒有收到回覆內容）";
       setChatMessages((prev) => [...prev, { role: "assistant", text: replyText }]);
     } catch (e) {
-      setChatError("小幫手暫時連不上，請確認網路連線後再試一次");
+      setChatError(`小幫手暫時連不上：${e.message || "未知錯誤"}`);
     } finally {
       setChatLoading(false);
     }
@@ -1371,7 +1379,7 @@ export default function App() {
 
         {/* ------------------------------------------------------------ */}
         {activeTab === "analysis" && (
-          <div className="fp-body" style={{ paddingTop: 18 }}>
+          <div className="fp-body" style={{ paddingTop: "calc(18px + env(safe-area-inset-top))" }}>
             <div className="fp-section-pad" style={{ paddingBottom: 0 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)" }}>財務分析</div>
@@ -1523,7 +1531,7 @@ export default function App() {
 
         {/* ------------------------------------------------------------ */}
         {activeTab === "budget" && (
-          <div className="fp-body" style={{ paddingTop: 18 }}>
+          <div className="fp-body" style={{ paddingTop: "calc(18px + env(safe-area-inset-top))" }}>
             <div className="fp-section-pad" style={{ paddingBottom: 0 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)" }}>預算控管</div>
