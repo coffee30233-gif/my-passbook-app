@@ -532,7 +532,6 @@ export default function App() {
           ],
           generationConfig: {
             maxOutputTokens: 3000,
-            thinkingConfig: { thinkingBudget: 0 },
             temperature: 0,
             responseMimeType: "application/json",
           },
