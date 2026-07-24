@@ -8,9 +8,9 @@ import {
   BookOpen, PieChart as PieChartIcon, Target, Wallet, Plus, X, Check,
   Utensils, Car, ShoppingBag, Film, Heart, GraduationCap, Zap, Gift,
   Briefcase, TrendingUp, PiggyBank, Banknote, Landmark, CreditCard,
-  Trash2, ChevronRight, ChevronLeft, Mic, Square, LineChart, Camera, Loader2, FileText,
+  Trash2, ChevronRight, ChevronLeft, ChevronDown, Mic, Square, LineChart, Camera, Loader2, FileText,
   Download, Upload, RotateCcw,
-  MessageCircle, Send, Bell, Folder, FolderOpen,
+  MessageCircle, Send, Bell, Folder, FolderOpen, Repeat, Power, Fingerprint, Lock, ShieldCheck,
   Home, Plane, Dumbbell, Music, Gamepad2, PawPrint, Fuel, Wrench, Sparkles, Coffee, Baby, Umbrella,
 } from "lucide-react";
 
@@ -169,6 +169,11 @@ function fmt(n) {
 function isoDaysAgo(n) {
   return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 }
+function addMonthsToKey(key, n) {
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 function monthKey(iso) {
   return iso.slice(0, 7);
 }
@@ -237,6 +242,73 @@ function normalizeAiCategory(cat) {
 function normalizeAiDate(dateStr) {
   if (typeof dateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
   return isoDaysAgo(0);
+}
+
+/* 從目標文字中自動偵測金額與類型（增加型 / 達到型） */
+function parseGoalAmount(text) {
+  let m = text.match(/(\d+(?:\.\d+)?)\s*萬/);
+  if (m) return Math.round(parseFloat(m[1]) * 10000);
+  m = text.match(/(\d+(?:\.\d+)?)\s*千/);
+  if (m) return Math.round(parseFloat(m[1]) * 1000);
+  m = text.match(/(?:NT\$|\$)\s*(\d{1,3}(?:,\d{3})+|\d+)/);
+  if (m) return Math.round(parseFloat(m[1].replace(/,/g, "")));
+  m = text.match(/(\d{1,3}(?:,\d{3})+|\d{4,})\s*(?:元|塊)/);
+  if (m) return Math.round(parseFloat(m[1].replace(/,/g, "")));
+  return null;
+}
+
+const GOAL_RELATIVE_KEYWORDS = ["再存", "多存", "增加", "多賺", "額外存", "存下"];
+const GOAL_ABSOLUTE_KEYWORDS = ["達到", "存到", "累積到", "存滿", "成長到", "突破", "存款到"];
+
+function detectGoalType(text) {
+  if (GOAL_RELATIVE_KEYWORDS.some((k) => text.includes(k))) return "relative";
+  if (GOAL_ABSOLUTE_KEYWORDS.some((k) => text.includes(k))) return "absolute";
+  return "absolute";
+}
+
+/* App 鎖定：密碼雜湊 + WebAuthn（Face ID / Touch ID）工具函式 */
+async function sha256Hex(text) {
+  const enc = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function registerBiometric() {
+  if (!window.PublicKeyCredential) throw new Error("這個裝置或瀏覽器不支援 Face ID / Touch ID");
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
+  const cred = await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: { name: "我的存摺" },
+      user: { id: userId, name: "owner", displayName: "我的存摺" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+      timeout: 60000,
+      attestation: "none",
+    },
+  });
+  if (!cred) throw new Error("設定失敗");
+  const bytes = new Uint8Array(cred.rawId);
+  let binary = "";
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return btoa(binary);
+}
+
+async function verifyBiometric(credentialIdB64) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const binary = atob(credentialIdB64);
+  const rawId = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) rawId[i] = binary.charCodeAt(i);
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      allowCredentials: [{ id: rawId, type: "public-key" }],
+      userVerification: "required",
+      timeout: 60000,
+    },
+  });
+  return !!assertion;
 }
 
 const STORAGE_KEY = "finance-passbook-v1";
@@ -316,7 +388,6 @@ export default function App() {
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [goalText, setGoalText] = useState("");
-  const [goalTargetAmount, setGoalTargetAmount] = useState("");
   const [goalTargetDate, setGoalTargetDate] = useState("");
   const [goalFormError, setGoalFormError] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
@@ -327,6 +398,7 @@ export default function App() {
 
   const [projects, setProjects] = useState([]);
   const [showProjectsList, setShowProjectsList] = useState(false);
+  const [expandedYears, setExpandedYears] = useState(() => new Set([new Date().getFullYear()]));
   const [projectDetailId, setProjectDetailId] = useState(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState(null);
@@ -337,6 +409,37 @@ export default function App() {
   const [projectNote, setProjectNote] = useState("");
   const [projectFormError, setProjectFormError] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
+
+  const [recurringItems, setRecurringItems] = useState([]);
+  const [showRecurringList, setShowRecurringList] = useState(false);
+  const [showRecurringForm, setShowRecurringForm] = useState(false);
+  const [editingRecurringId, setEditingRecurringId] = useState(null);
+  const [recurringName, setRecurringName] = useState("");
+  const [recurringType, setRecurringType] = useState("expense");
+  const [recurringAmount, setRecurringAmount] = useState("");
+  const [recurringCategory, setRecurringCategory] = useState("utilities");
+  const [recurringAccountId, setRecurringAccountId] = useState("cash");
+  const [recurringDay, setRecurringDay] = useState("1");
+  const [recurringStartDate, setRecurringStartDate] = useState(() => isoDaysAgo(0));
+  const [recurringEndDate, setRecurringEndDate] = useState("");
+  const [recurringNote, setRecurringNote] = useState("");
+  const [recurringFormError, setRecurringFormError] = useState("");
+  const [autoAppliedNotice, setAutoAppliedNotice] = useState(null);
+
+  const [lockEnabled, setLockEnabled] = useState(false);
+  const [pinHash, setPinHash] = useState(null);
+  const [webauthnCredentialId, setWebauthnCredentialId] = useState(null);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [showSecuritySetup, setShowSecuritySetup] = useState(false);
+  const [setupPin, setSetupPin] = useState("");
+  const [setupPinConfirm, setSetupPinConfirm] = useState("");
+  const [setupError, setSetupError] = useState("");
+  const [setupStep, setSetupStep] = useState("pin");
+  const [showLockPinFallback, setShowLockPinFallback] = useState(false);
+  const [lockPinInput, setLockPinInput] = useState("");
+  const [lockError, setLockError] = useState("");
+  const [showChangePin, setShowChangePin] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [preClearBackup, setPreClearBackup] = useState(null);
   const [lastBackupAt, setLastBackupAt] = useState(null);
@@ -376,6 +479,10 @@ export default function App() {
           setLastBackupAt(data.lastBackupAt || null);
           setBackupReminderSnoozedUntil(data.backupReminderSnoozedUntil || null);
           setTotalLoggedCount(typeof data.totalLoggedCount === "number" ? data.totalLoggedCount : (Array.isArray(data.transactions) ? data.transactions.length : 0));
+          setRecurringItems(Array.isArray(data.recurringItems) ? data.recurringItems : []);
+          setLockEnabled(!!data.lockEnabled);
+          setPinHash(data.pinHash || null);
+          setWebauthnCredentialId(data.webauthnCredentialId || null);
         } else {
           setTransactions(generateSeedTransactions());
           setHoldings(generateSeedHoldings());
@@ -399,12 +506,12 @@ export default function App() {
     if (!loaded) return;
     (async () => {
       try {
-        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount }));
+        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId }));
       } catch (e) {
         console.error("儲存失敗", e);
       }
     })();
-  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, loaded]);
+  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, loaded]);
 
   /* ------------------------- 衍生計算 ------------------------- */
   const ALL_CATS = useMemo(() => {
@@ -520,6 +627,31 @@ export default function App() {
     });
   }, [projects, transactions, ALL_CATS]);
 
+  const projectsByYear = useMemo(() => {
+    const map = {};
+    projectsWithTotals.forEach((p) => {
+      const year = p.startDate ? new Date(p.startDate + "T00:00:00").getFullYear() : new Date(p.id).getFullYear();
+      (map[year] = map[year] || []).push(p);
+    });
+    return Object.entries(map).sort((a, b) => b[0] - a[0]);
+  }, [projectsWithTotals]);
+
+  function toggleYear(year) {
+    setExpandedYears((prev) => {
+      const next = new Set(prev);
+      if (next.has(year)) next.delete(year);
+      else next.add(year);
+      return next;
+    });
+  }
+
+  const quickProjects = useMemo(() => {
+    const recent = [...projects].sort((a, b) => b.id - a.id).slice(0, 5);
+    const selected = projects.find((p) => p.id === projectId);
+    if (selected && !recent.some((p) => p.id === selected.id)) recent.unshift(selected);
+    return recent;
+  }, [projects, projectId]);
+
   const groupedTx = useMemo(() => {
     const map = {};
     transactions.forEach((t) => {
@@ -541,6 +673,75 @@ export default function App() {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages, showAssistant, chatLoading]);
+
+  /* App 切到背景 / 被切走時自動重新鎖定 */
+  useEffect(() => {
+    if (!lockEnabled) return;
+    function handleVisibility() {
+      if (document.hidden) {
+        setIsUnlocked(false);
+        setShowLockPinFallback(false);
+        setLockPinInput("");
+        setLockError("");
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [lockEnabled]);
+
+  /* 固定收支自動記錄：App 開啟時檢查每筆固定收支，把從上次記錄之後到現在為止、所有錯過的月份都補上 */
+  useEffect(() => {
+    if (!loaded) return;
+    const todayIso = isoDaysAgo(0);
+    const currentMonthKey = todayIso.slice(0, 7);
+    const todayDay = new Date().getDate();
+
+    const newTxs = [];
+    const updates = {};
+    let appliedCount = 0;
+    let backfilled = false;
+
+    recurringItems.forEach((r) => {
+      if (r.active === false) return;
+      let month = r.lastAppliedMonth
+        ? addMonthsToKey(r.lastAppliedMonth, 1)
+        : (r.startDate ? r.startDate.slice(0, 7) : (r.createdAt ? r.createdAt.slice(0, 7) : currentMonthKey));
+      const capMonth = r.endDate ? r.endDate.slice(0, 7) : currentMonthKey;
+      const upperBound = capMonth < currentMonthKey ? capMonth : currentMonthKey;
+      let lastApplied = r.lastAppliedMonth || null;
+      let monthsForThisItem = 0;
+      let safety = 0;
+      while (month <= upperBound && safety < 36) {
+        safety++;
+        if (month === currentMonthKey && todayDay < r.dayOfMonth) break;
+        newTxs.push({
+          id: Date.now() + newTxs.length,
+          date: `${month}-${String(r.dayOfMonth).padStart(2, "0")}`,
+          type: r.type,
+          category: r.category,
+          amount: r.amount,
+          accountId: r.accountId,
+          note: r.name,
+          projectId: null,
+        });
+        lastApplied = month;
+        monthsForThisItem++;
+        month = addMonthsToKey(month, 1);
+      }
+      if (monthsForThisItem > 0) {
+        updates[r.id] = lastApplied;
+        appliedCount += monthsForThisItem;
+        if (monthsForThisItem > 1) backfilled = true;
+      }
+    });
+
+    if (newTxs.length === 0) return;
+    setTransactions((prev) => [...newTxs, ...prev]);
+    bumpTreeGrowth(newTxs.length);
+    setRecurringItems((prev) => prev.map((r) => (updates[r.id] ? { ...r, lastAppliedMonth: updates[r.id] } : r)));
+    setAutoAppliedNotice(`已自動記錄 ${appliedCount} 筆固定收支${backfilled ? "（含補記之前錯過的月份）" : ""}`);
+    setTimeout(() => setAutoAppliedNotice(null), 5000);
+  }, [loaded, recurringItems]);
 
   /* ------------------------- 事件處理 ------------------------- */
   function openAdd(type) {
@@ -961,12 +1162,10 @@ export default function App() {
     if (goal) {
       setEditingGoalId(goal.id);
       setGoalText(goal.text);
-      setGoalTargetAmount(goal.targetAmount ? String(goal.targetAmount) : "");
       setGoalTargetDate(goal.targetDate || "");
     } else {
       setEditingGoalId(null);
       setGoalText("");
-      setGoalTargetAmount("");
       setGoalTargetDate("");
     }
     setGoalFormError("");
@@ -978,11 +1177,17 @@ export default function App() {
       setGoalFormError("請輸入你的目標內容");
       return;
     }
-    const amt = goalTargetAmount ? parseFloat(goalTargetAmount) : null;
+    const trimmed = goalText.trim();
+    const amt = parseGoalAmount(trimmed);
+    const goalType = detectGoalType(trimmed);
     if (editingGoalId) {
-      setGoals((prev) => prev.map((g) => (g.id === editingGoalId ? { ...g, text: goalText.trim(), targetAmount: amt, targetDate: goalTargetDate || null } : g)));
+      setGoals((prev) => prev.map((g) => {
+        if (g.id !== editingGoalId) return g;
+        const needsBaseline = goalType === "relative" && (g.baselineNetWorth === undefined || g.goalType !== "relative");
+        return { ...g, text: trimmed, targetAmount: amt, goalType, targetDate: goalTargetDate || null, baselineNetWorth: needsBaseline ? netWorth : g.baselineNetWorth };
+      }));
     } else {
-      setGoals((prev) => [...prev, { id: Date.now(), text: goalText.trim(), targetAmount: amt, targetDate: goalTargetDate || null }]);
+      setGoals((prev) => [...prev, { id: Date.now(), text: trimmed, targetAmount: amt, goalType, targetDate: goalTargetDate || null, createdAt: isoDaysAgo(0), baselineNetWorth: netWorth }]);
     }
     setShowGoalForm(false);
   }
@@ -990,6 +1195,29 @@ export default function App() {
   function handleDeleteGoal() {
     setGoals((prev) => prev.filter((g) => g.id !== editingGoalId));
     setShowGoalForm(false);
+  }
+
+  function getGoalProgress(goal) {
+    if (goal.targetAmount) {
+      if (goal.goalType === "relative") {
+        const baseline = typeof goal.baselineNetWorth === "number" ? goal.baselineNetWorth : 0;
+        const gained = netWorth - baseline;
+        const pct = Math.max(0, Math.min(100, Math.round((gained / goal.targetAmount) * 100)));
+        return { pct, label: `已增加 ${fmt(gained)} / 目標 ${fmt(goal.targetAmount)}`, color: pct >= 100 ? "var(--jade)" : "var(--brass)" };
+      }
+      const pct = Math.max(0, Math.min(100, Math.round((netWorth / goal.targetAmount) * 100)));
+      return { pct, label: `${fmt(netWorth)} / ${fmt(goal.targetAmount)}`, color: pct >= 100 ? "var(--jade)" : "var(--brass)" };
+    }
+    if (goal.targetDate && goal.createdAt) {
+      const start = new Date(goal.createdAt + "T00:00:00").getTime();
+      const end = new Date(goal.targetDate + "T00:00:00").getTime();
+      const now = Date.now();
+      if (end <= start) return null;
+      const pct = Math.max(0, Math.min(100, Math.round(((now - start) / (end - start)) * 100)));
+      const daysLeft = Math.ceil((end - now) / 86400000);
+      return { pct, label: daysLeft >= 0 ? `剩 ${daysLeft} 天` : "已過期", color: pct >= 100 ? "var(--seal)" : "var(--indigo)" };
+    }
+    return null;
   }
 
   function openProjectForm(proj) {
@@ -1113,6 +1341,161 @@ export default function App() {
     setProjectDetailId(null);
   }
 
+  function openRecurringForm(item) {
+    if (item) {
+      setEditingRecurringId(item.id);
+      setRecurringName(item.name);
+      setRecurringType(item.type);
+      setRecurringAmount(String(item.amount));
+      setRecurringCategory(item.category);
+      setRecurringAccountId(item.accountId);
+      setRecurringDay(String(item.dayOfMonth));
+      setRecurringNote(item.note || "");
+      setRecurringStartDate(item.startDate || item.createdAt || isoDaysAgo(0));
+      setRecurringEndDate(item.endDate || "");
+    } else {
+      setEditingRecurringId(null);
+      setRecurringName("");
+      setRecurringType("expense");
+      setRecurringAmount("");
+      setRecurringCategory(expenseCatKeys[0] || "other");
+      setRecurringAccountId("cash");
+      setRecurringDay("1");
+      setRecurringNote("");
+      setRecurringStartDate(isoDaysAgo(0));
+      setRecurringEndDate("");
+    }
+    setRecurringFormError("");
+    setShowRecurringForm(true);
+  }
+
+  function handleSaveRecurring() {
+    if (!recurringName.trim()) {
+      setRecurringFormError("請輸入這筆固定收支的名稱");
+      return;
+    }
+    const amt = parseFloat(recurringAmount);
+    if (!amt || amt <= 0) {
+      setRecurringFormError("請輸入正確的金額");
+      return;
+    }
+    const day = Math.min(28, Math.max(1, parseInt(recurringDay, 10) || 1));
+    const startDate = recurringStartDate || isoDaysAgo(0);
+    const endDate = recurringEndDate || null;
+    if (editingRecurringId) {
+      setRecurringItems((prev) => prev.map((r) => (r.id === editingRecurringId ? { ...r, name: recurringName.trim(), type: recurringType, amount: amt, category: recurringCategory, accountId: recurringAccountId, dayOfMonth: day, note: recurringNote.trim(), startDate, endDate } : r)));
+    } else {
+      setRecurringItems((prev) => [...prev, {
+        id: Date.now(), name: recurringName.trim(), type: recurringType, amount: amt, category: recurringCategory,
+        accountId: recurringAccountId, dayOfMonth: day, note: recurringNote.trim(), active: true, lastAppliedMonth: null,
+        createdAt: isoDaysAgo(0), startDate, endDate,
+      }]);
+    }
+    setShowRecurringForm(false);
+  }
+
+  function handleDeleteRecurring() {
+    setRecurringItems((prev) => prev.filter((r) => r.id !== editingRecurringId));
+    setShowRecurringForm(false);
+  }
+
+  function toggleRecurringActive(id) {
+    setRecurringItems((prev) => prev.map((r) => (r.id === id ? { ...r, active: r.active === false ? true : false } : r)));
+  }
+
+  function openSecuritySetup() {
+    setSetupPin("");
+    setSetupPinConfirm("");
+    setSetupError("");
+    setSetupStep("pin");
+    setShowSecuritySetup(true);
+  }
+
+  function handleSetupPinNext() {
+    if (setupPin.length < 4 || setupPin.length > 6) {
+      setSetupError("密碼請設定 4~6 位數字");
+      return;
+    }
+    if (setupPin !== setupPinConfirm) {
+      setSetupError("兩次輸入的密碼不一樣");
+      return;
+    }
+    setSetupError("");
+    setSetupStep("biometric");
+  }
+
+  async function handleSetupBiometric() {
+    try {
+      const credId = await registerBiometric();
+      const hash = await sha256Hex(setupPin);
+      setWebauthnCredentialId(credId);
+      setPinHash(hash);
+      setLockEnabled(true);
+      setShowSecuritySetup(false);
+    } catch (e) {
+      setSetupError("Face ID / Touch ID 設定失敗或取消，可以改用「只用密碼」");
+    }
+  }
+
+  async function handleSetupPinOnly() {
+    const hash = await sha256Hex(setupPin);
+    setPinHash(hash);
+    setWebauthnCredentialId(null);
+    setLockEnabled(true);
+    setShowSecuritySetup(false);
+  }
+
+  function handleDisableLock() {
+    setLockEnabled(false);
+    setPinHash(null);
+    setWebauthnCredentialId(null);
+    setIsUnlocked(true);
+  }
+
+  function openChangePin() {
+    setSetupPin("");
+    setSetupPinConfirm("");
+    setSetupError("");
+    setShowChangePin(true);
+  }
+
+  async function handleChangePinSubmit() {
+    if (setupPin.length < 4 || setupPin.length > 6) {
+      setSetupError("密碼請設定 4~6 位數字");
+      return;
+    }
+    if (setupPin !== setupPinConfirm) {
+      setSetupError("兩次輸入的密碼不一樣");
+      return;
+    }
+    const hash = await sha256Hex(setupPin);
+    setPinHash(hash);
+    setShowChangePin(false);
+  }
+
+  async function handleBiometricUnlockClick() {
+    setLockError("");
+    try {
+      const ok = await verifyBiometric(webauthnCredentialId);
+      if (ok) setIsUnlocked(true);
+      else setLockError("驗證失敗，請再試一次或改用密碼");
+    } catch (e) {
+      setLockError("Face ID / Touch ID 無法使用，請改用密碼");
+    }
+  }
+
+  async function handlePinUnlockSubmit() {
+    const hash = await sha256Hex(lockPinInput);
+    if (hash === pinHash) {
+      setIsUnlocked(true);
+      setLockPinInput("");
+      setLockError("");
+    } else {
+      setLockError("密碼不正確");
+      setLockPinInput("");
+    }
+  }
+
   function buildFinancialContext() {
     const topCats = categoryBreakdown.slice(0, 5).map((c) => `${c.label} NT$${fmt(c.value)}`).join("、") || "本月尚無支出";
     const budgetLines = budgetsWithSpent.map((b) => {
@@ -1121,8 +1504,10 @@ export default function App() {
     }).join("；") || "尚未設定預算";
     const goalLines = goals.map((g) => {
       const parts = [g.text];
-      if (g.targetAmount) parts.push(`目標金額 NT$${fmt(g.targetAmount)}`);
+      if (g.targetAmount) parts.push(`${g.goalType === "relative" ? "目標是從設定時開始再增加" : "目標是總資產達到"} NT$${fmt(g.targetAmount)}`);
       if (g.targetDate) parts.push(`目標日期 ${g.targetDate}`);
+      const progress = getGoalProgress(g);
+      if (progress) parts.push(`目前進度約 ${progress.pct}%`);
       return parts.join("，");
     }).join("\n") || "使用者目前沒有設定任何目標";
     const acctLines = Object.entries(ACCOUNT_META).map(([id, meta]) => `${meta.label} NT$${fmt(accountBalances[id] || 0)}`).join("、");
@@ -1405,6 +1790,18 @@ export default function App() {
         }
         @keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes fp-pop-in { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .fp-lock-screen {
+          position: absolute; inset: 0; z-index: 100;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 24px; text-align: center;
+          background: linear-gradient(160deg, var(--indigo) 0%, var(--indigo-soft) 100%);
+        }
+        .fp-lock-pin-input {
+          width: 180px; text-align: center; letter-spacing: 8px; font-size: 22px;
+          padding: 12px; border-radius: 12px; border: none; outline: none;
+          background: rgba(255,255,255,0.12); color: #EFE7D4; font-family: 'JetBrains Mono', monospace;
+        }
+        .fp-lock-pin-input::placeholder { color: rgba(239,231,212,0.5); letter-spacing: normal; font-size: 14px; font-family: 'Noto Sans TC', sans-serif; }
         .fp-card-title { font-size: 13px; font-weight: 700; color: var(--indigo); margin-bottom: 10px; }
         .fp-legend-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
         .fp-legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
@@ -1518,23 +1915,15 @@ export default function App() {
                   <div className="fp-cover-title fp-serif">帳　　本</div>
                   <div className="fp-cover-name fp-serif">我的存摺</div>
                 </div>
-                <button
-                  onClick={() => { setProjectDetailId(null); setShowProjectsList(true); }}
-                  style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif", flexShrink: 0 }}
-                ><FolderOpen size={14} /> 專案</button>
-              </div>
-              <div className="fp-cover-stats">
-                <div className="fp-stat">
-                  <div className="fp-stat-label">本月收入</div>
-                  <div className="fp-stat-value fp-mono" style={{ color: "#bcd9c7" }}>+{fmt(monthIncome)}</div>
-                </div>
-                <div className="fp-stat">
-                  <div className="fp-stat-label">本月支出</div>
-                  <div className="fp-stat-value fp-mono" style={{ color: "#f0c3bd" }}>-{fmt(monthExpense)}</div>
-                </div>
-                <div className="fp-stat">
-                  <div className="fp-stat-label">本月結餘</div>
-                  <div className="fp-stat-value fp-mono">{monthNet >= 0 ? "+" : ""}{fmt(monthNet)}</div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => setShowRecurringList(true)}
+                    style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  ><Repeat size={14} /> 固定收支</button>
+                  <button
+                    onClick={() => { setProjectDetailId(null); setShowProjectsList(true); }}
+                    style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  ><FolderOpen size={14} /> 專案</button>
                 </div>
               </div>
             </div>
@@ -1570,6 +1959,14 @@ export default function App() {
                   )}
                 </div>
               </div>
+
+              {autoAppliedNotice && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--jade-soft)", border: "1.5px solid var(--jade)", borderRadius: 12, padding: "10px 12px", margin: "12px 18px" }}>
+                  <Repeat size={16} color="var(--jade)" style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, fontSize: 12 }}>{autoAppliedNotice}</div>
+                  <button onClick={() => setAutoAppliedNotice(null)} style={{ background: "none", border: "none", color: "var(--ink-soft)", cursor: "pointer", flexShrink: 0 }}><X size={16} /></button>
+                </div>
+              )}
 
               {showBackupReminder && (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--brass-soft)", border: "1.5px solid var(--brass)", borderRadius: 12, padding: "10px 12px", margin: "12px 18px" }}>
@@ -1645,6 +2042,33 @@ export default function App() {
                   onClick={() => setShowAssistant(true)}
                   style={{ display: "flex", alignItems: "center", gap: 6, border: "1.5px solid var(--seal)", background: "none", color: "var(--seal)", borderRadius: 16, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
                 ><Sparkles size={14} /> 財務小幫手</button>
+              </div>
+
+              <div className="fp-card">
+                <div className="fp-card-title">目標進度</div>
+                {goals.length === 0 ? (
+                  <div style={{ color: "var(--ink-soft)", fontSize: 13 }}>還沒有設定目標，可到「財務小幫手」新增</div>
+                ) : (
+                  goals.map((g) => {
+                    const progress = getGoalProgress(g);
+                    return (
+                      <div key={g.id} style={{ marginBottom: 14 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{g.text}</div>
+                          {progress && <span className="fp-mono" style={{ fontSize: 12, color: progress.color, fontWeight: 700 }}>{progress.pct}%</span>}
+                        </div>
+                        {progress ? (
+                          <>
+                            <div className="fp-progress-track"><div className="fp-progress-fill" style={{ width: `${progress.pct}%`, background: progress.color }} /></div>
+                            <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }}>{progress.label}</div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>這個目標沒有設定金額或日期，無法計算進度</div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
               <div className="fp-card">
@@ -1984,6 +2408,25 @@ export default function App() {
               <input type="file" accept="application/json" ref={importFileInputRef} style={{ display: "none" }} onChange={handleImportFileChange} />
               {importError && <div className="fp-error" style={{ marginTop: 10 }}>{importError}</div>}
 
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)", margin: "24px 0 10px" }}>安全性</div>
+              {lockEnabled ? (
+                <div style={{ background: "var(--jade-soft)", border: "1.5px solid var(--jade)", borderRadius: 14, padding: "12px 14px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <ShieldCheck size={16} color="var(--jade)" />
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>已開啟 App 鎖定{webauthnCredentialId ? "（Face ID / Touch ID + 密碼）" : "（僅密碼）"}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={openChangePin} style={{ flex: 1, padding: "8px 0", borderRadius: 10, border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}>更改密碼</button>
+                    <button onClick={handleDisableLock} style={{ flex: 1, padding: "8px 0", borderRadius: 10, border: "1.5px solid var(--seal)", background: "none", color: "var(--seal)", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}>關閉鎖定</button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={openSecuritySetup}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 14, border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                ><Fingerprint size={16} /> 開啟 App 鎖定</button>
+              )}
+
               <button
                 onClick={() => setShowClearConfirm(true)}
                 style={{ width: "100%", marginTop: 20, padding: "10px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink-soft)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
@@ -2207,11 +2650,16 @@ export default function App() {
                   <div className="fp-field-label">專案（選填）</div>
                   <div style={{ display: "flex", flexWrap: "wrap" }}>
                     <button className={`fp-acct-chip ${!projectId ? "selected" : ""}`} onClick={() => setProjectId("")}>無</button>
-                    {projects.map((p) => (
+                    {quickProjects.map((p) => (
                       <button key={p.id} className={`fp-acct-chip ${projectId === p.id ? "selected" : ""}`} onClick={() => setProjectId(p.id)}>
                         {p.name}
                       </button>
                     ))}
+                    {projects.length > quickProjects.length && (
+                      <button className="fp-acct-chip" onClick={() => setShowProjectPicker(true)} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <Folder size={12} /> 更多專案
+                      </button>
+                    )}
                   </div>
                 </>
               )}
@@ -2434,7 +2882,7 @@ export default function App() {
                         {g.text}
                         {(g.targetAmount || g.targetDate) && (
                           <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 2 }}>
-                            {g.targetAmount ? `NT$ ${fmt(g.targetAmount)}` : ""}{g.targetAmount && g.targetDate ? " · " : ""}{g.targetDate || ""}
+                            {g.targetAmount ? `${g.goalType === "relative" ? "增加" : "達到"} NT$ ${fmt(g.targetAmount)}` : ""}{g.targetAmount && g.targetDate ? " · " : ""}{g.targetDate || ""}
                           </div>
                         )}
                       </div>
@@ -2500,9 +2948,24 @@ export default function App() {
                 {editingGoalId ? "編輯目標" : "新增目標"}
               </div>
               <div className="fp-field-label">你的目標</div>
-              <input className="fp-input" placeholder="例如：半年內存到 10 萬元" value={goalText} onChange={(e) => setGoalText(e.target.value)} />
-              <div className="fp-field-label">目標金額（選填）</div>
-              <input className="fp-input" inputMode="decimal" placeholder="NT$ 0" value={goalTargetAmount} onChange={(e) => setGoalTargetAmount(e.target.value.replace(/[^0-9.]/g, ""))} />
+              <input className="fp-input" placeholder="例如：半年內存到 10 萬元 / 再存 5 萬元" value={goalText} onChange={(e) => setGoalText(e.target.value)} />
+              {(() => {
+                const detectedAmt = parseGoalAmount(goalText);
+                const detectedType = detectGoalType(goalText);
+                if (!goalText.trim()) return null;
+                if (detectedAmt) {
+                  return (
+                    <div style={{ fontSize: 11.5, color: "var(--indigo)", marginTop: 6, background: "var(--brass-soft)", borderRadius: 8, padding: "6px 10px" }}>
+                      系統偵測到：{detectedType === "relative" ? `從現在開始，目標「增加」NT$ ${fmt(detectedAmt)}` : `目標「達到」總資產 NT$ ${fmt(detectedAmt)}`}
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 6 }}>
+                    沒有偵測到金額（可以寫「10萬」「5000元」這種格式），這個目標不會顯示金額進度條
+                  </div>
+                );
+              })()}
               <div className="fp-field-label">目標日期（選填）</div>
               <input type="date" className="fp-input" value={goalTargetDate} onChange={(e) => setGoalTargetDate(e.target.value)} />
               {goalFormError && <div className="fp-error" style={{ marginTop: 12 }}>{goalFormError}</div>}
@@ -2542,21 +3005,42 @@ export default function App() {
                       還沒有任何專案，像是旅行、裝潢這種橫跨多個分類的花費，可以建一個專案把它們集中起來看
                     </div>
                   )}
-                  {projectsWithTotals.map((p) => (
-                    <div key={p.id} onClick={() => setProjectDetailId(p.id)} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff8ec", border: "1px solid #e3d9bd", borderRadius: 12, padding: "12px 14px", marginBottom: 10, cursor: "pointer" }}>
-                      <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
-                        <Folder size={17} />
+                  {projectsByYear.map(([year, yearProjects]) => {
+                    const isOpen = expandedYears.has(Number(year));
+                    const yearTotal = yearProjects.reduce((a, p) => a + p.totalExpense, 0);
+                    return (
+                      <div key={year} style={{ marginBottom: 10 }}>
+                        <div
+                          onClick={() => toggleYear(Number(year))}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 4px", cursor: "pointer", borderBottom: "1px solid #d8d0ba" }}
+                        >
+                          {isOpen ? <ChevronDown size={16} color="var(--indigo)" /> : <ChevronRight size={16} color="var(--indigo)" />}
+                          <div className="fp-serif" style={{ fontSize: 15, fontWeight: 700, color: "var(--indigo)", flex: 1 }}>{year} 年</div>
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{yearProjects.length} 個專案</div>
+                          <div className="fp-mono" style={{ fontSize: 12, color: "var(--seal)", fontWeight: 700 }}>{fmt(yearTotal)}</div>
+                        </div>
+                        {isOpen && (
+                          <div style={{ marginTop: 10 }}>
+                            {yearProjects.map((p) => (
+                              <div key={p.id} onClick={() => setProjectDetailId(p.id)} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff8ec", border: "1px solid #e3d9bd", borderRadius: 12, padding: "12px 14px", marginBottom: 10, cursor: "pointer" }}>
+                                <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
+                                  <Folder size={17} />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
+                                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{p.count} 筆記錄{p.startDate ? ` · ${p.startDate}${p.endDate ? ` ~ ${p.endDate}` : ""}` : ""}</div>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <div className="fp-mono" style={{ fontWeight: 700, color: "var(--seal)" }}>{fmt(p.totalExpense)}</div>
+                                  {p.budget ? <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>預算 {fmt(p.budget)}</div> : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                        <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{p.count} 筆記錄{p.startDate ? ` · ${p.startDate}${p.endDate ? ` ~ ${p.endDate}` : ""}` : ""}</div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div className="fp-mono" style={{ fontWeight: 700, color: "var(--seal)" }}>{fmt(p.totalExpense)}</div>
-                        {p.budget ? <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>預算 {fmt(p.budget)}</div> : null}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </>
               ) : (() => {
                 const p = projectsWithTotals.find((x) => x.id === projectDetailId);
@@ -2675,6 +3159,228 @@ export default function App() {
         )}
 
         {/* ------------------------------------------------------------ */}
+        {/* ------------------------------------------------------------ */}
+        {showProjectPicker && (
+          <div className="fp-overlay" onClick={() => setShowProjectPicker(false)}>
+            <div className="fp-sheet" style={{ maxHeight: "80%" }} onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowProjectPicker(false)}><X size={20} /></button>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">選擇專案</div>
+              <button
+                onClick={() => { setProjectId(""); setShowProjectPicker(false); }}
+                style={{ width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 10, border: !projectId ? "1.5px solid var(--indigo)" : "1px solid #e3d9bd", background: !projectId ? "var(--brass-soft)" : "#fff8ec", marginBottom: 10, cursor: "pointer", fontSize: 13.5, fontFamily: "'Noto Sans TC', sans-serif" }}
+              >無</button>
+              {projectsByYear.map(([year, yearProjects]) => (
+                <div key={year} style={{ marginBottom: 10 }}>
+                  <div className="fp-serif" style={{ fontSize: 13, fontWeight: 700, color: "var(--indigo)", margin: "6px 0" }}>{year} 年</div>
+                  {yearProjects.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setProjectId(p.id); setShowProjectPicker(false); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, textAlign: "left", padding: "10px 12px", borderRadius: 10, border: projectId === p.id ? "1.5px solid var(--indigo)" : "1px solid #e3d9bd", background: projectId === p.id ? "var(--brass-soft)" : "#fff8ec", marginBottom: 8, cursor: "pointer", fontSize: 13.5, fontFamily: "'Noto Sans TC', sans-serif" }}
+                    >
+                      <Folder size={14} color="var(--indigo)" style={{ flexShrink: 0 }} />
+                      <span style={{ flex: 1 }}>{p.name}</span>
+                      <span className="fp-mono" style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{p.count} 筆</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showRecurringList && (
+          <div className="fp-overlay" onClick={() => setShowRecurringList(false)}>
+            <div className="fp-sheet" style={{ maxHeight: "88%" }} onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowRecurringList(false)}><X size={20} /></button>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 16 }} className="fp-serif">固定收支</div>
+                <button
+                  onClick={() => openRecurringForm(null)}
+                  style={{ border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", borderRadius: 16, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                >+ 新增</button>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 14 }}>
+                每月到了指定日期，打開 App 就會自動幫你記上這一筆，不用手動輸入。如果好幾個月沒開 App，會自動把錯過的月份一次補齊。暫停後不會再自動記錄，但不會刪掉已經記過的明細。
+              </div>
+              {recurringItems.length === 0 && (
+                <div style={{ fontSize: 13, color: "var(--ink-soft)", textAlign: "center", padding: "20px 0" }}>
+                  還沒有設定固定收支，像是房租、訂閱費、薪水這種每月都會發生的項目，可以設定成自動記錄
+                </div>
+              )}
+              {recurringItems.map((r) => {
+                const meta = ALL_CATS[r.category] || { label: r.category, icon: Gift };
+                const Icon = meta.icon;
+                const isActive = r.active !== false;
+                return (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff8ec", border: "1px solid #e3d9bd", borderRadius: 12, padding: "12px 14px", marginBottom: 10, opacity: isActive ? 1 : 0.5 }}>
+                    <div onClick={() => openRecurringForm(r)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer" }}>
+                      <div className="fp-tx-icon" style={{ color: r.type === "income" ? "var(--jade)" : "var(--seal)", background: r.type === "income" ? "var(--jade-soft)" : "var(--seal-soft)" }}>
+                        <Icon size={17} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{r.name}</div>
+                        <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
+                          每月 {r.dayOfMonth} 號 · {meta.label}{isActive ? "" : "（已暫停）"}
+                          {r.startDate ? ` · 從 ${r.startDate}${r.endDate ? ` 到 ${r.endDate}` : " 起"}` : ""}
+                        </div>
+                      </div>
+                      <div className="fp-mono" style={{ fontWeight: 700, color: r.type === "income" ? "var(--jade)" : "var(--seal)" }}>
+                        {r.type === "income" ? "+" : "-"}{fmt(r.amount)}
+                      </div>
+                    </div>
+                    <button onClick={() => toggleRecurringActive(r.id)} style={{ background: "none", border: "none", color: isActive ? "var(--jade)" : "var(--ink-soft)", cursor: "pointer", flexShrink: 0 }}>
+                      <Power size={17} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showRecurringForm && (
+          <div className="fp-overlay" onClick={() => setShowRecurringForm(false)}>
+            <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowRecurringForm(false)}><X size={20} /></button>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">
+                {editingRecurringId ? "編輯固定收支" : "新增固定收支"}
+              </div>
+
+              <div className="fp-segmented">
+                <button
+                  className={`fp-segment-btn ${recurringType === "expense" ? "active-expense" : ""}`}
+                  onClick={() => { setRecurringType("expense"); setRecurringCategory(expenseCatKeys[0] || "other"); }}
+                >支出</button>
+                <button
+                  className={`fp-segment-btn ${recurringType === "income" ? "active-income" : ""}`}
+                  onClick={() => { setRecurringType("income"); setRecurringCategory(incomeCatKeys[0] || "otherIncome"); }}
+                >收入</button>
+              </div>
+
+              <div className="fp-field-label">名稱</div>
+              <input className="fp-input" placeholder="例如：房租、Netflix 訂閱、薪水" value={recurringName} onChange={(e) => setRecurringName(e.target.value)} />
+
+              <div className="fp-field-label">金額</div>
+              <input className="fp-input" inputMode="decimal" placeholder="NT$ 0" value={recurringAmount} onChange={(e) => setRecurringAmount(e.target.value.replace(/[^0-9.]/g, ""))} />
+
+              <div className="fp-field-label">分類</div>
+              <select className="fp-input" value={recurringCategory} onChange={(e) => setRecurringCategory(e.target.value)}>
+                {(recurringType === "expense" ? expenseCatKeys : incomeCatKeys).map((k) => (
+                  <option key={k} value={k}>{ALL_CATS[k].label}</option>
+                ))}
+              </select>
+
+              <div className="fp-field-label">帳戶</div>
+              <div style={{ display: "flex", flexWrap: "wrap" }}>
+                {Object.entries(ACCOUNT_META).map(([id, meta]) => (
+                  <button key={id} className={`fp-acct-chip ${recurringAccountId === id ? "selected" : ""}`} onClick={() => setRecurringAccountId(id)}>
+                    {meta.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="fp-field-label">每月幾號自動記錄</div>
+              <input type="number" min="1" max="28" className="fp-input" value={recurringDay} onChange={(e) => setRecurringDay(e.target.value.replace(/[^0-9]/g, ""))} />
+              <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>建議填 1~28 號，避免月底天數不同的問題</div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="fp-field-label">開始日期</div>
+                  <input type="date" className="fp-input" value={recurringStartDate} onChange={(e) => setRecurringStartDate(e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div className="fp-field-label">結束日期（選填）</div>
+                  <input type="date" className="fp-input" value={recurringEndDate} onChange={(e) => setRecurringEndDate(e.target.value)} />
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>
+                開始日期決定第一次補記從哪個月開始算；結束日期到了之後就不會再自動記錄，留空代表沒有期限
+              </div>
+
+              <div className="fp-field-label">備註（選填）</div>
+              <input className="fp-input" placeholder="例如：每月 5 號扣款" value={recurringNote} onChange={(e) => setRecurringNote(e.target.value)} />
+
+              {recurringFormError && <div className="fp-error" style={{ marginTop: 12 }}>{recurringFormError}</div>}
+              <button className="fp-save-btn" onClick={handleSaveRecurring} style={{ background: "var(--indigo)" }}>
+                <Check size={18} /> {editingRecurringId ? "儲存變更" : "新增固定收支"}
+              </button>
+              {editingRecurringId && (
+                <button
+                  onClick={handleDeleteRecurring}
+                  style={{ width: "100%", marginTop: 10, padding: "10px 0", borderRadius: 14, border: "1.5px solid var(--seal)", background: "none", color: "var(--seal)", fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "'Noto Sans TC', sans-serif" }}
+                >
+                  <Trash2 size={15} /> 刪除這筆固定收支
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showSecuritySetup && (
+          <div className="fp-overlay" onClick={() => setShowSecuritySetup(false)}>
+            <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowSecuritySetup(false)}><X size={20} /></button>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">開啟 App 鎖定</div>
+
+              {setupStep === "pin" ? (
+                <>
+                  <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 14, textAlign: "center" }}>
+                    先設定一組備用密碼，之後如果 Face ID / Touch ID 沒辦法用，還能用密碼解鎖
+                  </div>
+                  <div className="fp-field-label">設定密碼（4~6 位數字）</div>
+                  <input type="password" inputMode="numeric" maxLength={6} className="fp-input" value={setupPin} onChange={(e) => setSetupPin(e.target.value.replace(/[^0-9]/g, ""))} />
+                  <div className="fp-field-label">再輸入一次</div>
+                  <input type="password" inputMode="numeric" maxLength={6} className="fp-input" value={setupPinConfirm} onChange={(e) => setSetupPinConfirm(e.target.value.replace(/[^0-9]/g, ""))} />
+                  {setupError && <div className="fp-error" style={{ marginTop: 12 }}>{setupError}</div>}
+                  <button className="fp-save-btn" onClick={handleSetupPinNext} style={{ background: "var(--indigo)" }}>
+                    <ChevronRight size={18} /> 下一步
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+                    <Fingerprint size={44} color="var(--indigo)" />
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 18, textAlign: "center" }}>
+                    要設定 Face ID / Touch ID 嗎？設定後打開 App 主要會用生物辨識解鎖，密碼當備用
+                  </div>
+                  {setupError && <div className="fp-error" style={{ marginBottom: 12 }}>{setupError}</div>}
+                  <button className="fp-save-btn" onClick={handleSetupBiometric} style={{ background: "var(--indigo)" }}>
+                    <Fingerprint size={18} /> 設定 Face ID / Touch ID
+                  </button>
+                  <button
+                    onClick={handleSetupPinOnly}
+                    style={{ width: "100%", marginTop: 10, padding: "12px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink)", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  >只用密碼就好</button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showChangePin && (
+          <div className="fp-overlay" onClick={() => setShowChangePin(false)}>
+            <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowChangePin(false)}><X size={20} /></button>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">更改密碼</div>
+              <div className="fp-field-label">新密碼（4~6 位數字）</div>
+              <input type="password" inputMode="numeric" maxLength={6} className="fp-input" value={setupPin} onChange={(e) => setSetupPin(e.target.value.replace(/[^0-9]/g, ""))} />
+              <div className="fp-field-label">再輸入一次</div>
+              <input type="password" inputMode="numeric" maxLength={6} className="fp-input" value={setupPinConfirm} onChange={(e) => setSetupPinConfirm(e.target.value.replace(/[^0-9]/g, ""))} />
+              {setupError && <div className="fp-error" style={{ marginTop: 12 }}>{setupError}</div>}
+              <button className="fp-save-btn" onClick={handleChangePinSubmit} style={{ background: "var(--indigo)" }}>
+                <Check size={18} /> 儲存新密碼
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
         {showClearConfirm && (
           <div className="fp-overlay" onClick={() => setShowClearConfirm(false)}>
             <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
@@ -2741,6 +3447,55 @@ export default function App() {
               <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)", margin: "4px 0" }}>{levelUpInfo.name}</div>
               <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{levelUpInfo.desc}</div>
             </div>
+          </div>
+        )}
+        {lockEnabled && !isUnlocked && (
+          <div className="fp-lock-screen">
+            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
+              <Lock size={28} color="#EFE7D4" />
+            </div>
+            <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "#EFE7D4", marginBottom: 6 }}>我的存摺</div>
+            <div style={{ fontSize: 12.5, color: "rgba(239,231,212,0.7)", marginBottom: 28 }}>已鎖定，請驗證身分後繼續</div>
+
+            {!showLockPinFallback ? (
+              <>
+                {webauthnCredentialId ? (
+                  <button onClick={handleBiometricUnlockClick} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
+                    <div style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Fingerprint size={34} color="#EFE7D4" />
+                    </div>
+                    <span style={{ color: "#EFE7D4", fontSize: 13, fontWeight: 600 }}>使用 Face ID / Touch ID 解鎖</span>
+                  </button>
+                ) : (
+                  <div style={{ color: "rgba(239,231,212,0.7)", fontSize: 12.5, textAlign: "center" }}>這台裝置沒有設定生物辨識<br />請用密碼解鎖</div>
+                )}
+                {lockError && <div style={{ color: "#f0c3bd", fontSize: 12, marginTop: 14 }}>{lockError}</div>}
+                <button onClick={() => { setShowLockPinFallback(true); setLockError(""); }} style={{ marginTop: 24, background: "none", border: "none", color: "rgba(239,231,212,0.8)", fontSize: 12.5, textDecoration: "underline", cursor: "pointer" }}>
+                  改用密碼解鎖
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  type="password" inputMode="numeric" maxLength={6}
+                  className="fp-lock-pin-input"
+                  placeholder="輸入密碼"
+                  value={lockPinInput}
+                  onChange={(e) => setLockPinInput(e.target.value.replace(/[^0-9]/g, ""))}
+                  onKeyDown={(e) => { if (e.key === "Enter") handlePinUnlockSubmit(); }}
+                  autoFocus
+                />
+                {lockError && <div style={{ color: "#f0c3bd", fontSize: 12, marginTop: 10 }}>{lockError}</div>}
+                <button onClick={handlePinUnlockSubmit} className="fp-save-btn" style={{ marginTop: 16, width: 200, background: "var(--seal)" }}>
+                  <Check size={16} /> 解鎖
+                </button>
+                {webauthnCredentialId && (
+                  <button onClick={() => { setShowLockPinFallback(false); setLockError(""); }} style={{ marginTop: 14, background: "none", border: "none", color: "rgba(239,231,212,0.8)", fontSize: 12.5, textDecoration: "underline", cursor: "pointer" }}>
+                    改用 Face ID / Touch ID
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
