@@ -1632,7 +1632,8 @@ export default function App() {
           .fp-root {
             padding: 0;
             background: var(--paper);
-            height: 100%;
+            position: fixed;
+            inset: 0;
           }
           .fp-phone {
             max-width: 100%;
