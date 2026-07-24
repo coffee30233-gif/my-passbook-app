@@ -6,7 +6,7 @@
 // 新增一個 GEMINI_API_KEY，值是你自己在 aistudio.google.com 申請的 API 金鑰
 // （申請免費、不需要綁信用卡）。
 
-const MODEL = "gemini-3.6-flash";
+const MODEL = "gemini-2.5-flash";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
