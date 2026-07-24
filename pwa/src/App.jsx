@@ -279,6 +279,7 @@ export default function App() {
   const [projectNote, setProjectNote] = useState("");
   const [projectFormError, setProjectFormError] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [isListening, setIsListening] = useState(false);
@@ -883,6 +884,20 @@ export default function App() {
     setShowProjectForm(false);
   }
 
+  function handleClearAllData() {
+    setTransactions([]);
+    setHoldings([]);
+    setCustomCategories([]);
+    setBudgetLimits([]);
+    setAccountStartBalances(Object.fromEntries(Object.keys(ACCOUNT_META).map((id) => [id, 0])));
+    setGoals([]);
+    setChatMessages([]);
+    setProjects([]);
+    setLedgerPage(0);
+    setActiveTab("ledger");
+    setShowClearConfirm(false);
+  }
+
   function handleDeleteProject() {
     setProjects((prev) => prev.filter((p) => p.id !== editingProjectId));
     setTransactions((prev) => prev.map((t) => (t.projectId === editingProjectId ? { ...t, projectId: null } : t)));
@@ -966,6 +981,11 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
+        html, body {
+          height: 100%;
+          margin: 0;
+          overscroll-behavior-y: none;
+        }
         .fp-root {
           --paper: #EEE9DD;
           --paper-alt: #E4DECD;
@@ -986,6 +1006,8 @@ export default function App() {
           font-family: 'Noto Sans TC', sans-serif;
           color: var(--ink);
           box-sizing: border-box;
+          min-height: 100vh;
+          min-height: 100dvh;
         }
         .fp-root * { box-sizing: border-box; }
         .fp-phone {
@@ -998,8 +1020,24 @@ export default function App() {
           overflow: hidden;
           display: flex;
           flex-direction: column;
-          min-height: 800px;
+          height: 800px;
           position: relative;
+        }
+        @media (max-width: 480px) {
+          .fp-root {
+            padding: 0;
+            background: var(--paper);
+            min-height: 100vh;
+            min-height: 100dvh;
+          }
+          .fp-phone {
+            max-width: 100%;
+            border-radius: 0;
+            border: none;
+            box-shadow: none;
+            height: 100vh;
+            height: 100dvh;
+          }
         }
         .fp-mono { font-family: 'JetBrains Mono', monospace; }
         .fp-serif { font-family: 'Noto Serif TC', serif; }
@@ -1008,7 +1046,7 @@ export default function App() {
         .fp-cover {
           background: linear-gradient(160deg, var(--indigo) 0%, var(--indigo-soft) 100%);
           color: #EFE7D4;
-          padding: 22px 20px 26px;
+          padding: calc(22px + env(safe-area-inset-top)) 20px 26px;
           position: relative;
         }
         .fp-cover-title {
@@ -1049,7 +1087,7 @@ export default function App() {
         .fp-body {
           flex: 1;
           overflow-y: auto;
-          padding: 4px 0 90px;
+          padding: 4px 0 calc(90px + env(safe-area-inset-bottom));
         }
         .fp-section-pad { padding: 16px 18px; }
 
@@ -1102,7 +1140,7 @@ export default function App() {
           background: var(--paper);
           border-top: 1px solid #d8d0ba;
           display: flex;
-          padding: 8px 6px 14px;
+          padding: 8px 6px calc(14px + env(safe-area-inset-bottom));
         }
         .fp-tab {
           flex: 1;
@@ -1116,7 +1154,7 @@ export default function App() {
         .fp-tab.active { color: var(--indigo); font-weight: 700; }
         .fp-fab {
           position: absolute;
-          bottom: 34px; left: 50%; transform: translateX(-50%);
+          bottom: calc(34px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
           width: 56px; height: 56px; border-radius: 50%;
           background: var(--seal);
           border: 4px solid var(--paper);
@@ -1651,6 +1689,11 @@ export default function App() {
                   </div>
                 );
               })}
+
+              <button
+                onClick={() => setShowClearConfirm(true)}
+                style={{ width: "100%", marginTop: 28, padding: "10px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink-soft)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+              >清除所有資料，重新開始</button>
             </div>
           </div>
         )}
@@ -2333,6 +2376,32 @@ export default function App() {
                   <Trash2 size={15} /> 刪除這個專案
                 </button>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showClearConfirm && (
+          <div className="fp-overlay" onClick={() => setShowClearConfirm(false)}>
+            <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowClearConfirm(false)}><X size={20} /></button>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+                <div style={{ width: 48, height: 48, borderRadius: "50%", background: "var(--seal-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Trash2 size={22} color="var(--seal)" />
+                </div>
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 8 }} className="fp-serif">確定要清除所有資料嗎？</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-soft)", textAlign: "center", marginBottom: 20, lineHeight: 1.6 }}>
+                明細、帳戶餘額、投資組合、預算、目標、跟小幫手的對話紀錄都會被清空，這個動作沒辦法復原。
+              </div>
+              <button
+                onClick={handleClearAllData}
+                style={{ width: "100%", padding: "12px 0", borderRadius: 14, border: "none", background: "var(--seal)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+              >確定清除</button>
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                style={{ width: "100%", marginTop: 10, padding: "12px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink)", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+              >取消</button>
             </div>
           </div>
         )}
