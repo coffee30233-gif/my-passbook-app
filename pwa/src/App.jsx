@@ -524,12 +524,31 @@ export default function App() {
                     `date 如果上面只有月/日沒有年份，請用今年，今天的日期是 ${today}。` +
                     `amount 只填數字，不要包含幣別符號或逗號。` +
                     `category 必須是以下其中一個英文字串：food（餐飲）、transport（交通）、shopping（購物）、entertainment（娛樂）、medical（醫療）、education（教育）、utilities（居家水電）、creditcard（信用卡相關費用如年費/利息）、other（其他）。` +
-                    `如果內容看不清楚、無法辨識，或不是帳單/收據，請回傳空陣列 []。如果是多頁 PDF，請盡量列出每一頁的消費明細。`,
+                    `如果內容看不清楚、無法辨識，或不是帳單/收據，請回傳空陣列 []。如果是多頁 PDF，請盡量列出每一頁的消費明細。` +
+                    `非常重要：你的回覆內容第一個字元必須是 [，最後一個字元必須是 ]，前後不要加任何說明、標題、或其他文字。`,
                 },
               ],
             },
           ],
-          generationConfig: { maxOutputTokens: 1500 },
+          generationConfig: {
+            maxOutputTokens: 3000,
+            thinkingConfig: { thinkingBudget: 0 },
+            temperature: 0,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  date: { type: "STRING" },
+                  merchant: { type: "STRING" },
+                  amount: { type: "NUMBER" },
+                  category: { type: "STRING" },
+                },
+                required: ["date", "merchant", "amount", "category"],
+              },
+            },
+          },
         }),
       });
 
@@ -547,8 +566,32 @@ export default function App() {
         const reason = candidate && candidate.finishReason ? `（原因：${candidate.finishReason}）` : "";
         throw new Error(`沒有收到辨識結果${reason}`);
       }
-      let cleaned = textPart.text.trim().replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
-      const parsed = JSON.parse(cleaned);
+      let cleaned = textPart.text.trim().replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").replace(/`/g, "").trim();
+      const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (arrayMatch) cleaned = arrayMatch[0];
+
+      let parsed;
+      let truncatedWarning = "";
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (parseErr) {
+        // 嘗試修復被截斷的 JSON：截到最後一筆完整的物件，補上收尾括號
+        const lastGoodIndex = cleaned.lastIndexOf("},");
+        let repaired = null;
+        if (lastGoodIndex !== -1) {
+          try {
+            repaired = JSON.parse(cleaned.slice(0, lastGoodIndex + 1) + "]");
+          } catch (e2) { /* 修復失敗 */ }
+        }
+        if (Array.isArray(repaired) && repaired.length > 0) {
+          parsed = repaired;
+          truncatedWarning = `辨識結果可能被截斷，只抓到前 ${repaired.length} 筆，請檢查有沒有漏掉的項目`;
+        } else {
+          const reason = candidate && candidate.finishReason ? candidate.finishReason : "未知";
+          throw new Error(`JSON 解析失敗（結束原因：${reason}，回覆長度：${textPart.text.length} 字）：${parseErr.message}`);
+        }
+      }
+
       if (!Array.isArray(parsed)) throw new Error("辨識結果格式不正確");
       if (parsed.length === 0) {
         setAiError("沒有在照片裡辨識到明確的消費項目，請確認照片清晰，或改用手動輸入");
@@ -563,6 +606,7 @@ export default function App() {
           included: true,
         }));
         setAiCandidates(candidates);
+        if (truncatedWarning) setAiError(truncatedWarning);
       }
     } catch (e) {
       setAiError(`AI 辨識失敗：${e.message || "未知錯誤"}`);
