@@ -507,24 +507,17 @@ export default function App() {
       const mediaType = match[1];
       const base64Data = match[2];
       const today = isoDaysAgo(0);
-      const isPdf = mediaType === "application/pdf";
-      const fileContentBlock = isPdf
-        ? { type: "document", source: { type: "base64", media_type: mediaType, data: base64Data } }
-        : { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } };
 
-      const response = await fetch("/api/claude", {
+      const response = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [
+          contents: [
             {
               role: "user",
-              content: [
-                fileContentBlock,
+              parts: [
+                { inline_data: { mime_type: mediaType, data: base64Data } },
                 {
-                  type: "text",
                   text:
                     `這是一份信用卡帳單或收據，可能是照片，也可能是 PDF 電子檔。請仔細閱讀裡面每一筆消費明細，只回傳一個純 JSON 陣列，不要有任何說明文字、不要用 markdown code block（不要加 \`\`\`）。` +
                     `每筆資料格式為 {"date":"YYYY-MM-DD","merchant":"商家或項目名稱","amount":數字,"category":"分類"}。` +
@@ -536,6 +529,7 @@ export default function App() {
               ],
             },
           ],
+          generationConfig: { maxOutputTokens: 1500 },
         }),
       });
 
@@ -545,9 +539,15 @@ export default function App() {
         throw new Error(`API 回應錯誤（${response.status}）${detail ? "：" + detail : ""}`);
       }
       const data = await response.json();
-      const textBlock = (data.content || []).find((b) => b.type === "text");
-      if (!textBlock) throw new Error("沒有收到辨識結果");
-      let cleaned = textBlock.text.trim().replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
+      const candidate = data.candidates && data.candidates[0];
+      const textPart = candidate && candidate.content && candidate.content.parts
+        ? candidate.content.parts.find((p) => typeof p.text === "string")
+        : null;
+      if (!textPart) {
+        const reason = candidate && candidate.finishReason ? `（原因：${candidate.finishReason}）` : "";
+        throw new Error(`沒有收到辨識結果${reason}`);
+      }
+      let cleaned = textPart.text.trim().replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
       const parsed = JSON.parse(cleaned);
       if (!Array.isArray(parsed)) throw new Error("辨識結果格式不正確");
       if (parsed.length === 0) {
@@ -945,14 +945,13 @@ export default function App() {
     setChatError("");
     setChatLoading(true);
     try {
-      const response = await fetch("/api/claude", {
+      const response = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          system: buildFinancialContext(),
-          messages: history.map((m) => ({ role: m.role, content: m.text })),
+          system_instruction: { parts: [{ text: buildFinancialContext() }] },
+          contents: history.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.text }] })),
+          generationConfig: { maxOutputTokens: 1000 },
         }),
       });
       if (!response.ok) {
@@ -961,8 +960,11 @@ export default function App() {
         throw new Error(`API 回應錯誤（${response.status}）${detail ? "：" + detail : ""}`);
       }
       const data = await response.json();
-      const textBlock = (data.content || []).find((b) => b.type === "text");
-      const replyText = textBlock ? textBlock.text : "（沒有收到回覆內容）";
+      const candidate = data.candidates && data.candidates[0];
+      const textPart = candidate && candidate.content && candidate.content.parts
+        ? candidate.content.parts.find((p) => typeof p.text === "string")
+        : null;
+      const replyText = textPart ? textPart.text : `（沒有收到回覆內容${candidate && candidate.finishReason ? "，原因：" + candidate.finishReason : ""}）`;
       setChatMessages((prev) => [...prev, { role: "assistant", text: replyText }]);
     } catch (e) {
       setChatError(`小幫手暫時連不上：${e.message || "未知錯誤"}`);
