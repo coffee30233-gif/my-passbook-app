@@ -674,13 +674,26 @@ export default function App() {
       const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
       document.documentElement.style.setProperty("--app-vh", `${h * 0.01}px`);
     }
+    function handleVisibilityRecalc() {
+      if (!document.hidden) {
+        // 延遲一下再量，等系統畫面（例如 Face ID 授權、相機）完全關閉、視窗尺寸穩定後再抓
+        setTimeout(setAppHeight, 50);
+        setTimeout(setAppHeight, 300);
+      }
+    }
     setAppHeight();
     window.addEventListener("resize", setAppHeight);
     window.addEventListener("orientationchange", setAppHeight);
+    window.addEventListener("pageshow", setAppHeight);
+    window.addEventListener("focus", setAppHeight);
+    document.addEventListener("visibilitychange", handleVisibilityRecalc);
     if (window.visualViewport) window.visualViewport.addEventListener("resize", setAppHeight);
     return () => {
       window.removeEventListener("resize", setAppHeight);
       window.removeEventListener("orientationchange", setAppHeight);
+      window.removeEventListener("pageshow", setAppHeight);
+      window.removeEventListener("focus", setAppHeight);
+      document.removeEventListener("visibilitychange", handleVisibilityRecalc);
       if (window.visualViewport) window.visualViewport.removeEventListener("resize", setAppHeight);
     };
   }, []);
@@ -1600,8 +1613,13 @@ export default function App() {
         html, body, #root {
           height: 100%;
           margin: 0;
+          overflow: hidden;
           overscroll-behavior-y: none;
           background: #EEE9DD;
+        }
+        body {
+          position: fixed;
+          width: 100%;
         }
         .fp-root {
           --paper: #EEE9DD;
@@ -1932,8 +1950,7 @@ export default function App() {
             <div className="fp-cover">
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
                 <div>
-                  <div className="fp-cover-title fp-serif">帳　　本</div>
-                  <div className="fp-cover-name fp-serif">我的存摺</div>
+                  <div className="fp-cover-name fp-serif">我的帳本</div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                   <button
