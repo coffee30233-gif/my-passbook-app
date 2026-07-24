@@ -1580,10 +1580,11 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
-        html, body {
+        html, body, #root {
           height: 100%;
           margin: 0;
           overscroll-behavior-y: none;
+          background: #EEE9DD;
         }
         .fp-root {
           --paper: #EEE9DD;
