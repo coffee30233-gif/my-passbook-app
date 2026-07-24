@@ -535,19 +535,6 @@ export default function App() {
             thinkingConfig: { thinkingBudget: 0 },
             temperature: 0,
             responseMimeType: "application/json",
-            responseSchema: {
-              type: "ARRAY",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  date: { type: "STRING" },
-                  merchant: { type: "STRING" },
-                  amount: { type: "NUMBER" },
-                  category: { type: "STRING" },
-                },
-                required: ["date", "merchant", "amount", "category"],
-              },
-            },
           },
         }),
       });
