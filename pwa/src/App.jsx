@@ -395,6 +395,7 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const chatScrollRef = useRef(null);
+  const phoneRef = useRef(null);
 
   const [projects, setProjects] = useState([]);
   const [showProjectsList, setShowProjectsList] = useState(false);
@@ -667,6 +668,34 @@ export default function App() {
   useEffect(() => {
     if (ledgerPage > ledgerTotalPages - 1) setLedgerPage(Math.max(0, ledgerTotalPages - 1));
   }, [ledgerTotalPages, ledgerPage]);
+
+  /* 直接用 JS 量測、寫死成行內 px 高度，繞過所有 CSS vh/dvh/百分比計算，避免 iOS 獨立模式的算圖誤差 */
+  useEffect(() => {
+    function applyExactHeight() {
+      if (!phoneRef.current) return;
+      if (window.matchMedia("(max-width: 480px)").matches) {
+        const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+        phoneRef.current.style.height = `${h}px`;
+      } else {
+        phoneRef.current.style.height = "";
+      }
+    }
+    applyExactHeight();
+    const recalc = () => { applyExactHeight(); setTimeout(applyExactHeight, 50); setTimeout(applyExactHeight, 300); };
+    window.addEventListener("resize", recalc);
+    window.addEventListener("orientationchange", recalc);
+    window.addEventListener("pageshow", recalc);
+    window.addEventListener("focus", recalc);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) recalc(); });
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", recalc);
+    return () => {
+      window.removeEventListener("resize", recalc);
+      window.removeEventListener("orientationchange", recalc);
+      window.removeEventListener("pageshow", recalc);
+      window.removeEventListener("focus", recalc);
+      if (window.visualViewport) window.visualViewport.removeEventListener("resize", recalc);
+    };
+  }, []);
 
   useEffect(() => {
     if (showAssistant && chatScrollRef.current) {
@@ -1910,7 +1939,7 @@ export default function App() {
         }
       `}</style>
 
-      <div className="fp-phone">
+      <div className="fp-phone" ref={phoneRef}>
         {/* ------------------------------------------------------------ */}
         {activeTab === "ledger" && (
           <>
