@@ -9,6 +9,7 @@ import {
   Utensils, Car, ShoppingBag, Film, Heart, GraduationCap, Zap, Gift,
   Briefcase, TrendingUp, PiggyBank, Banknote, Landmark, CreditCard,
   Trash2, ChevronRight, ChevronLeft, Mic, Square, LineChart, Camera, Loader2, FileText,
+  Download, Upload, RotateCcw,
   MessageCircle, Send, Bell, Folder, FolderOpen,
   Home, Plane, Dumbbell, Music, Gamepad2, PawPrint, Fuel, Wrench, Sparkles, Coffee, Baby, Umbrella,
 } from "lucide-react";
@@ -57,6 +58,62 @@ function generateSeedBudgets() {
 }
 
 const DONUT_COLORS = ["#B33A2E", "#A8843F", "#2F6F4E", "#2B3A4A", "#8C5E58", "#5C7A63", "#7A4A3A", "#4A5A6A"];
+
+/* 搖錢樹成長階段：min 是達到這個階段所需的累計記帳筆數 */
+const TREE_STAGES = [
+  { min: 0,   name: "種子",   desc: "種下一顆種子，記帳旅程開始了" },
+  { min: 3,   name: "發芽",   desc: "土裡冒出了嫩芽" },
+  { min: 10,  name: "幼苗",   desc: "長出了幾片葉子" },
+  { min: 25,  name: "小樹",   desc: "枝葉漸漸茂盛起來" },
+  { min: 50,  name: "茂盛",   desc: "開始結出金色果實" },
+  { min: 100, name: "結果",   desc: "滿樹金幣，欣欣向榮" },
+  { min: 200, name: "搖錢樹", desc: "枝繁葉茂、金光閃閃，已經是最高階段了" },
+];
+
+function getTreeStageIndex(count) {
+  let idx = 0;
+  for (let i = 0; i < TREE_STAGES.length; i++) {
+    if (count >= TREE_STAGES[i].min) idx = i;
+  }
+  return idx;
+}
+
+/* 每個階段的樹形資料：樹幹高度、葉叢位置、金幣位置 */
+const TREE_SHAPES = [
+  { trunkH: 6,  leaves: [], coins: [] },
+  { trunkH: 18, leaves: [{ cx: 100, cy: 154, r: 11 }], coins: [] },
+  { trunkH: 36, leaves: [{ cx: 90, cy: 132, r: 14 }, { cx: 111, cy: 128, r: 12 }], coins: [] },
+  { trunkH: 55, leaves: [{ cx: 78, cy: 112, r: 17 }, { cx: 110, cy: 100, r: 20 }, { cx: 132, cy: 114, r: 15 }, { cx: 97, cy: 122, r: 13 }], coins: [] },
+  { trunkH: 66, leaves: [{ cx: 68, cy: 96, r: 19 }, { cx: 100, cy: 80, r: 23 }, { cx: 132, cy: 96, r: 19 }, { cx: 84, cy: 112, r: 15 }, { cx: 116, cy: 112, r: 15 }], coins: [{ cx: 85, cy: 132 }, { cx: 116, cy: 134 }] },
+  { trunkH: 72, leaves: [{ cx: 62, cy: 92, r: 20 }, { cx: 100, cy: 72, r: 26 }, { cx: 138, cy: 92, r: 20 }, { cx: 78, cy: 108, r: 17 }, { cx: 122, cy: 108, r: 17 }, { cx: 100, cy: 104, r: 15 }], coins: [{ cx: 72, cy: 128 }, { cx: 100, cy: 138 }, { cx: 128, cy: 128 }, { cx: 90, cy: 118 }] },
+  { trunkH: 76, leaves: [{ cx: 58, cy: 88, r: 21 }, { cx: 100, cy: 66, r: 28 }, { cx: 142, cy: 88, r: 21 }, { cx: 74, cy: 106, r: 18 }, { cx: 126, cy: 106, r: 18 }, { cx: 100, cy: 98, r: 17 }, { cx: 88, cy: 118, r: 13 }, { cx: 112, cy: 118, r: 13 }], coins: [{ cx: 64, cy: 126 }, { cx: 90, cy: 140 }, { cx: 112, cy: 140 }, { cx: 136, cy: 126 }, { cx: 100, cy: 130 }, { cx: 76, cy: 112 }] },
+];
+
+function MoneyTreeSVG({ stageIndex, size = 96 }) {
+  const shape = TREE_SHAPES[stageIndex];
+  const isMax = stageIndex === TREE_SHAPES.length - 1;
+  return (
+    <svg width={size} height={size} viewBox="0 0 200 200">
+      {isMax && <circle cx="100" cy="100" r="90" fill="var(--brass-soft)" opacity="0.5" />}
+      {/* 花盆 */}
+      <path d="M 78 170 L 122 170 L 116 190 L 84 190 Z" fill="var(--indigo)" />
+      <rect x="74" y="164" width="52" height="8" rx="2" fill="var(--indigo-soft)" />
+      {/* 樹幹 */}
+      <rect x="97" y={164 - shape.trunkH} width="6" height={shape.trunkH} fill="#7A4A3A" rx="2" />
+      {/* 葉叢 */}
+      {shape.leaves.map((l, i) => (
+        <circle key={i} cx={l.cx} cy={l.cy} r={l.r} fill="var(--jade)" opacity={0.92} />
+      ))}
+      {/* 金幣 */}
+      {shape.coins.map((c, i) => (
+        <g key={i}>
+          <circle cx={c.cx} cy={c.cy} r={7} fill="var(--brass)" stroke="#8a6a2f" strokeWidth="1" />
+          <circle cx={c.cx} cy={c.cy} r={2.6} fill="none" stroke="#8a6a2f" strokeWidth="1" />
+        </g>
+      ))}
+    </svg>
+  );
+}
 
 /* 自訂分類可挑選的圖示 */
 const ICON_OPTIONS = [
@@ -183,6 +240,7 @@ function normalizeAiDate(dateStr) {
 }
 
 const STORAGE_KEY = "finance-passbook-v1";
+const PRECLEAR_KEY = "finance-passbook-preclear-backup";
 
 function generateSeedHoldings() {
   return [
@@ -280,6 +338,15 @@ export default function App() {
   const [projectFormError, setProjectFormError] = useState("");
   const [projectId, setProjectId] = useState("");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [preClearBackup, setPreClearBackup] = useState(null);
+  const [lastBackupAt, setLastBackupAt] = useState(null);
+  const [totalLoggedCount, setTotalLoggedCount] = useState(0);
+  const [levelUpInfo, setLevelUpInfo] = useState(null);
+  const [backupReminderSnoozedUntil, setBackupReminderSnoozedUntil] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [importError, setImportError] = useState("");
+  const importFileInputRef = useRef(null);
 
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [isListening, setIsListening] = useState(false);
@@ -306,6 +373,9 @@ export default function App() {
           setGoals(Array.isArray(data.goals) ? data.goals : []);
           setChatMessages(Array.isArray(data.chatMessages) ? data.chatMessages : []);
           setProjects(Array.isArray(data.projects) ? data.projects : []);
+          setLastBackupAt(data.lastBackupAt || null);
+          setBackupReminderSnoozedUntil(data.backupReminderSnoozedUntil || null);
+          setTotalLoggedCount(typeof data.totalLoggedCount === "number" ? data.totalLoggedCount : (Array.isArray(data.transactions) ? data.transactions.length : 0));
         } else {
           setTransactions(generateSeedTransactions());
           setHoldings(generateSeedHoldings());
@@ -316,6 +386,10 @@ export default function App() {
         setHoldings(generateSeedHoldings());
         setBudgetLimits(generateSeedBudgets());
       }
+      try {
+        const backupRes = await storage.get(PRECLEAR_KEY);
+        if (backupRes && backupRes.value) setPreClearBackup(JSON.parse(backupRes.value));
+      } catch (e) { /* 沒有備份，忽略 */ }
       setLoaded(true);
     })();
   }, []);
@@ -325,12 +399,12 @@ export default function App() {
     if (!loaded) return;
     (async () => {
       try {
-        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects }));
+        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount }));
       } catch (e) {
         console.error("儲存失敗", e);
       }
     })();
-  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, loaded]);
+  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, loaded]);
 
   /* ------------------------- 衍生計算 ------------------------- */
   const ALL_CATS = useMemo(() => {
@@ -411,6 +485,24 @@ export default function App() {
       return { ...b, spent };
     });
   }, [monthTx, budgetLimits]);
+
+  const treeStageIndex = useMemo(() => getTreeStageIndex(totalLoggedCount), [totalLoggedCount]);
+  const treeStage = TREE_STAGES[treeStageIndex];
+  const nextTreeStage = TREE_STAGES[treeStageIndex + 1];
+
+  const daysSinceBackup = useMemo(() => {
+    if (!lastBackupAt) return Infinity;
+    return Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 86400000);
+  }, [lastBackupAt]);
+
+  const showBackupReminder =
+    transactions.length >= 10 &&
+    daysSinceBackup >= 14 &&
+    (!backupReminderSnoozedUntil || Date.now() > new Date(backupReminderSnoozedUntil).getTime());
+
+  function snoozeBackupReminder() {
+    setBackupReminderSnoozedUntil(new Date(Date.now() + 7 * 86400000).toISOString());
+  }
 
   const projectsWithTotals = useMemo(() => {
     return projects.map((p) => {
@@ -626,6 +718,7 @@ export default function App() {
       note: c.merchant,
     }));
     setTransactions((prev) => [...newTxs, ...prev]);
+    bumpTreeGrowth(newTxs.length);
     setLedgerPage(0);
     setAiCandidates(null);
     setBillPhotoUrl(null);
@@ -633,6 +726,19 @@ export default function App() {
     setBillFileName("");
     setBillMode(false);
     setShowAdd(false);
+  }
+
+  function bumpTreeGrowth(increment) {
+    setTotalLoggedCount((prev) => {
+      const next = prev + increment;
+      const oldStage = getTreeStageIndex(prev);
+      const newStage = getTreeStageIndex(next);
+      if (newStage > oldStage) {
+        setLevelUpInfo({ ...TREE_STAGES[newStage], stageIndex: newStage });
+        setTimeout(() => setLevelUpInfo(null), 3200);
+      }
+      return next;
+    });
   }
 
   function handleSave() {
@@ -643,6 +749,7 @@ export default function App() {
     }
     const newTx = { id: Date.now(), date, type: txType, category, amount: amt, accountId, note: note.trim(), projectId: projectId || null };
     setTransactions((prev) => [newTx, ...prev]);
+    bumpTreeGrowth(1);
     setLedgerPage(0);
     setStamped(true);
     if (billMode) {
@@ -919,7 +1026,10 @@ export default function App() {
     setShowProjectForm(false);
   }
 
-  function handleClearAllData() {
+  async function handleClearAllData() {
+    const snapshot = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, clearedAt: new Date().toISOString() };
+    try { await storage.set(PRECLEAR_KEY, JSON.stringify(snapshot)); } catch (e) { /* 備份失敗也繼續清除 */ }
+    setPreClearBackup(snapshot);
     setTransactions([]);
     setHoldings([]);
     setCustomCategories([]);
@@ -931,6 +1041,69 @@ export default function App() {
     setLedgerPage(0);
     setActiveTab("ledger");
     setShowClearConfirm(false);
+  }
+
+  async function handleRestorePreClear() {
+    if (!preClearBackup) return;
+    setTransactions(Array.isArray(preClearBackup.transactions) ? preClearBackup.transactions : []);
+    setHoldings(Array.isArray(preClearBackup.holdings) ? preClearBackup.holdings : []);
+    setCustomCategories(Array.isArray(preClearBackup.customCategories) ? preClearBackup.customCategories : []);
+    setBudgetLimits(Array.isArray(preClearBackup.budgetLimits) ? preClearBackup.budgetLimits : []);
+    setAccountStartBalances(preClearBackup.accountStartBalances && typeof preClearBackup.accountStartBalances === "object" ? preClearBackup.accountStartBalances : {});
+    setGoals(Array.isArray(preClearBackup.goals) ? preClearBackup.goals : []);
+    setChatMessages(Array.isArray(preClearBackup.chatMessages) ? preClearBackup.chatMessages : []);
+    setProjects(Array.isArray(preClearBackup.projects) ? preClearBackup.projects : []);
+    setPreClearBackup(null);
+    try { await storage.delete(PRECLEAR_KEY); } catch (e) { /* 忽略 */ }
+  }
+
+  function handleExportBackup() {
+    const payload = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `我的存摺備份-${isoDaysAgo(0)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setLastBackupAt(new Date().toISOString());
+  }
+
+  function handleImportFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setImportError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        setImportPreview(data);
+        setShowImportConfirm(true);
+      } catch (err) {
+        setImportError("這個檔案看起來不是有效的備份檔，請確認選對檔案");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  function confirmImportBackup() {
+    const data = importPreview;
+    if (!data) return;
+    setTransactions(Array.isArray(data.transactions) ? data.transactions : []);
+    setHoldings(Array.isArray(data.holdings) ? data.holdings : []);
+    setCustomCategories(Array.isArray(data.customCategories) ? data.customCategories : []);
+    setBudgetLimits(Array.isArray(data.budgetLimits) ? data.budgetLimits : []);
+    setAccountStartBalances(data.accountStartBalances && typeof data.accountStartBalances === "object" ? data.accountStartBalances : {});
+    setGoals(Array.isArray(data.goals) ? data.goals : []);
+    setChatMessages(Array.isArray(data.chatMessages) ? data.chatMessages : []);
+    setProjects(Array.isArray(data.projects) ? data.projects : []);
+    setLastBackupAt(data.exportedAt || new Date().toISOString());
+    setLedgerPage(0);
+    setImportPreview(null);
+    setShowImportConfirm(false);
   }
 
   function handleDeleteProject() {
@@ -1213,6 +1386,25 @@ export default function App() {
           padding: 14px 16px;
           margin-bottom: 14px;
         }
+        .fp-tree-card {
+          display: flex; align-items: center; gap: 14px;
+          background: #fff8ec; border: 1px solid #e3d9bd; border-radius: 16px;
+          padding: 14px 16px; margin: 12px 18px 4px;
+        }
+        .fp-levelup-overlay {
+          position: absolute; inset: 0; z-index: 40;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(38,34,32,0.45);
+          animation: fp-fade-in 0.25s ease-out;
+          pointer-events: none;
+        }
+        .fp-levelup-card {
+          background: var(--paper); border-radius: 20px; padding: 26px 30px;
+          text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+          animation: fp-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes fp-pop-in { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .fp-card-title { font-size: 13px; font-weight: 700; color: var(--indigo); margin-bottom: 10px; }
         .fp-legend-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
         .fp-legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
@@ -1355,6 +1547,39 @@ export default function App() {
               </svg>
             </div>
             <div className="fp-body">
+              <div className="fp-tree-card">
+                <MoneyTreeSVG stageIndex={treeStageIndex} size={84} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>記帳養成</div>
+                  <div className="fp-serif" style={{ fontSize: 17, fontWeight: 700, color: "var(--indigo)" }}>{treeStage.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 2 }}>{treeStage.desc}</div>
+                  {nextTreeStage ? (
+                    <div style={{ marginTop: 8 }}>
+                      <div className="fp-progress-track" style={{ height: 6 }}>
+                        <div className="fp-progress-fill" style={{
+                          width: `${Math.min(100, Math.round(((totalLoggedCount - treeStage.min) / (nextTreeStage.min - treeStage.min)) * 100))}%`,
+                          background: "var(--jade)",
+                        }} />
+                      </div>
+                      <div style={{ fontSize: 10.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                        再記 {nextTreeStage.min - totalLoggedCount} 筆，長成「{nextTreeStage.name}」
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 10.5, color: "var(--brass)", marginTop: 8, fontWeight: 700 }}>已經是最高階段了 🎉 已累計 {totalLoggedCount} 筆</div>
+                  )}
+                </div>
+              </div>
+
+              {showBackupReminder && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--brass-soft)", border: "1.5px solid var(--brass)", borderRadius: 12, padding: "10px 12px", margin: "12px 18px" }}>
+                  <Download size={16} color="var(--indigo)" style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, fontSize: 12 }}>
+                    {lastBackupAt ? `已經 ${daysSinceBackup} 天沒有備份了` : "還沒有備份過資料"}，建議去「帳戶」頁匯出一份
+                  </div>
+                  <button onClick={snoozeBackupReminder} style={{ background: "none", border: "none", color: "var(--ink-soft)", cursor: "pointer", flexShrink: 0 }}><X size={16} /></button>
+                </div>
+              )}
               {groupedTx.length === 0 && (
                 <div style={{ padding: 32, textAlign: "center", color: "var(--ink-soft)" }}>還沒有任何記錄，點下方印章開始記帳吧</div>
               )}
@@ -1731,9 +1956,37 @@ export default function App() {
                 );
               })}
 
+              {preClearBackup && (
+                <div style={{ background: "var(--brass-soft)", border: "1.5px solid var(--brass)", borderRadius: 14, padding: "12px 14px", marginTop: 20 }}>
+                  <div style={{ fontSize: 12.5, marginBottom: 8 }}>你剛剛清除過一次資料，如果是不小心按到，還可以救回來。</div>
+                  <button
+                    onClick={handleRestorePreClear}
+                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "9px 0", borderRadius: 12, border: "none", background: "var(--indigo)", color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  ><RotateCcw size={14} /> 復原剛剛清除的資料</button>
+                </div>
+              )}
+
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)", margin: "24px 0 10px" }}>備份</div>
+              <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 }}>資料只存在這支手機裡，建議偶爾匯出存一份，換手機或不小心清除時才救得回來</div>
+              <div style={{ fontSize: 12, color: lastBackupAt ? "var(--jade)" : "var(--seal)", marginBottom: 10, fontWeight: 600 }}>
+                {lastBackupAt ? `上次備份：${daysSinceBackup === 0 ? "今天" : `${daysSinceBackup} 天前`}` : "尚未備份過"}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={handleExportBackup}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 14, border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                ><Download size={14} /> 匯出備份</button>
+                <button
+                  onClick={() => importFileInputRef.current && importFileInputRef.current.click()}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 14, border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                ><Upload size={14} /> 匯入備份</button>
+              </div>
+              <input type="file" accept="application/json" ref={importFileInputRef} style={{ display: "none" }} onChange={handleImportFileChange} />
+              {importError && <div className="fp-error" style={{ marginTop: 10 }}>{importError}</div>}
+
               <button
                 onClick={() => setShowClearConfirm(true)}
-                style={{ width: "100%", marginTop: 28, padding: "10px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink-soft)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                style={{ width: "100%", marginTop: 20, padding: "10px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink-soft)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
               >清除所有資料，重新開始</button>
             </div>
           </div>
@@ -2433,7 +2686,7 @@ export default function App() {
               </div>
               <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 8 }} className="fp-serif">確定要清除所有資料嗎？</div>
               <div style={{ fontSize: 12.5, color: "var(--ink-soft)", textAlign: "center", marginBottom: 20, lineHeight: 1.6 }}>
-                明細、帳戶餘額、投資組合、預算、目標、跟小幫手的對話紀錄都會被清空，這個動作沒辦法復原。
+                明細、帳戶餘額、投資組合、預算、目標、跟小幫手的對話紀錄都會被清空。清除後帳戶頁會出現一次性的復原按鈕，但如果之後又做了其他操作，復原按鈕就會消失，建議清除前先匯出一份備份。
               </div>
               <button
                 onClick={handleClearAllData}
@@ -2443,6 +2696,50 @@ export default function App() {
                 onClick={() => setShowClearConfirm(false)}
                 style={{ width: "100%", marginTop: 10, padding: "12px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink)", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
               >取消</button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showImportConfirm && (
+          <div className="fp-overlay" onClick={() => { setShowImportConfirm(false); setImportPreview(null); }}>
+            <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => { setShowImportConfirm(false); setImportPreview(null); }}><X size={20} /></button>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+                <div style={{ width: 48, height: 48, borderRadius: "50%", background: "var(--brass-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Upload size={20} color="var(--indigo)" />
+                </div>
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 8 }} className="fp-serif">確定要匯入這份備份嗎？</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-soft)", textAlign: "center", marginBottom: 8, lineHeight: 1.6 }}>
+                匯入會直接覆蓋目前這支手機上的所有資料（明細、帳戶、投資、預算、目標、對話紀錄），現有資料如果還沒備份會消失。
+              </div>
+              {importPreview && (
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", textAlign: "center", marginBottom: 16 }}>
+                  這份備份含 {Array.isArray(importPreview.transactions) ? importPreview.transactions.length : 0} 筆明細
+                  {importPreview.exportedAt ? `，匯出於 ${new Date(importPreview.exportedAt).toLocaleString("zh-Hant-TW")}` : ""}
+                </div>
+              )}
+              <button
+                onClick={confirmImportBackup}
+                style={{ width: "100%", padding: "12px 0", borderRadius: 14, border: "none", background: "var(--indigo)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+              >確定匯入</button>
+              <button
+                onClick={() => { setShowImportConfirm(false); setImportPreview(null); }}
+                style={{ width: "100%", marginTop: 10, padding: "12px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink)", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+              >取消</button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {levelUpInfo && (
+          <div className="fp-levelup-overlay">
+            <div className="fp-levelup-card">
+              <MoneyTreeSVG stageIndex={levelUpInfo.stageIndex} size={100} />
+              <div style={{ fontSize: 12, color: "var(--brass)", fontWeight: 700, marginTop: 6 }}>🎉 恭喜升級</div>
+              <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)", margin: "4px 0" }}>{levelUpInfo.name}</div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{levelUpInfo.desc}</div>
             </div>
           </div>
         )}
