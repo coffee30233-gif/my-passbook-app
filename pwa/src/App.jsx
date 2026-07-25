@@ -395,6 +395,7 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const chatScrollRef = useRef(null);
+  const amountInputRef = useRef(null);
   const phoneRef = useRef(null);
 
   const [projects, setProjects] = useState([]);
@@ -411,6 +412,13 @@ export default function App() {
   const [projectFormError, setProjectFormError] = useState("");
   const [projectId, setProjectId] = useState("");
   const [showProjectPicker, setShowProjectPicker] = useState(false);
+  const [bankSectionOpen, setBankSectionOpen] = useState(false);
+  const [investmentSectionOpen, setInvestmentSectionOpen] = useState(false);
+  const [customAccounts, setCustomAccounts] = useState([]);
+  const [showAddBankForm, setShowAddBankForm] = useState(false);
+  const [newBankName, setNewBankName] = useState("");
+  const [newBankStart, setNewBankStart] = useState("");
+  const [newBankError, setNewBankError] = useState("");
 
   const [recurringItems, setRecurringItems] = useState([]);
   const [showRecurringList, setShowRecurringList] = useState(false);
@@ -482,6 +490,7 @@ export default function App() {
           setTotalLoggedCount(typeof data.totalLoggedCount === "number" ? data.totalLoggedCount : (Array.isArray(data.transactions) ? data.transactions.length : 0));
           setRecurringItems(Array.isArray(data.recurringItems) ? data.recurringItems : []);
           setLockEnabled(!!data.lockEnabled);
+          setCustomAccounts(Array.isArray(data.customAccounts) ? data.customAccounts : []);
           setPinHash(data.pinHash || null);
           setWebauthnCredentialId(data.webauthnCredentialId || null);
         } else {
@@ -507,12 +516,12 @@ export default function App() {
     if (!loaded) return;
     (async () => {
       try {
-        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId }));
+        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, customAccounts }));
       } catch (e) {
         console.error("儲存失敗", e);
       }
     })();
-  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, loaded]);
+  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, customAccounts, loaded]);
 
   /* ------------------------- 衍生計算 ------------------------- */
   const ALL_CATS = useMemo(() => {
@@ -523,19 +532,27 @@ export default function App() {
     return merged;
   }, [customCategories]);
 
+  const ALL_ACCOUNTS = useMemo(() => {
+    const merged = { ...ACCOUNT_META };
+    customAccounts.forEach((a) => {
+      merged[a.id] = { label: a.label, icon: Landmark, start: a.start, group: "bank" };
+    });
+    return merged;
+  }, [customAccounts]);
+
   const accountBalances = useMemo(() => {
     const balances = {};
-    Object.keys(ACCOUNT_META).forEach((id) => (balances[id] = accountStartBalances[id] !== undefined ? accountStartBalances[id] : ACCOUNT_META[id].start));
+    Object.keys(ALL_ACCOUNTS).forEach((id) => (balances[id] = accountStartBalances[id] !== undefined ? accountStartBalances[id] : ALL_ACCOUNTS[id].start));
     transactions.forEach((t) => {
       const sign = t.type === "income" ? 1 : -1;
       balances[t.accountId] = (balances[t.accountId] || 0) + sign * t.amount;
     });
     return balances;
-  }, [transactions, accountStartBalances]);
+  }, [transactions, accountStartBalances, ALL_ACCOUNTS]);
 
   const netWorth = useMemo(
-    () => Object.keys(ACCOUNT_META).reduce((a, id) => a + (accountBalances[id] || 0), 0) + holdings.reduce((a, h) => a + h.shares * h.currentPrice, 0),
-    [accountBalances, holdings]
+    () => Object.keys(ALL_ACCOUNTS).reduce((a, id) => a + (accountBalances[id] || 0), 0) + holdings.reduce((a, h) => a + h.shares * h.currentPrice, 0),
+    [accountBalances, holdings, ALL_ACCOUNTS]
   );
 
   const portfolioValue = useMemo(() => holdings.reduce((a, h) => a + h.shares * h.currentPrice, 0), [holdings]);
@@ -668,6 +685,25 @@ export default function App() {
   useEffect(() => {
     if (ledgerPage > ledgerTotalPages - 1) setLedgerPage(Math.max(0, ledgerTotalPages - 1));
   }, [ledgerTotalPages, ledgerPage]);
+
+  /* 修正鍵盤彈出時，iOS 會把輸入框推到畫面外的問題：改成主動在欄位所在的捲動容器內定位，而不是依賴瀏覽器自己的捲動行為 */
+  useEffect(() => {
+    function handleFocusIn(e) {
+      const el = e.target;
+      const tag = el && el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+        window.scrollTo(0, 0);
+        const reposition = () => {
+          window.scrollTo(0, 0);
+          if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "nearest" });
+        };
+        setTimeout(reposition, 50);
+        setTimeout(reposition, 350);
+      }
+    }
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, []);
 
   /* 直接用 JS 量測、寫死成行內 px 高度，繞過所有 CSS vh/dvh/百分比計算，避免 iOS 獨立模式的算圖誤差 */
   useEffect(() => {
@@ -988,6 +1024,7 @@ export default function App() {
         setStamped(false);
         setAmount("");
         setNote("");
+        if (amountInputRef.current) amountInputRef.current.focus();
       }, 420);
     } else {
       setTimeout(() => {
@@ -1171,10 +1208,29 @@ export default function App() {
 
   function openAcctForm(id) {
     setEditingAcctId(id);
-    const current = accountStartBalances[id] !== undefined ? accountStartBalances[id] : ACCOUNT_META[id].start;
+    const current = accountStartBalances[id] !== undefined ? accountStartBalances[id] : ALL_ACCOUNTS[id].start;
     setAcctStartInput(String(current));
     setAcctFormError("");
     setShowAcctForm(true);
+  }
+
+  function openAddBankForm() {
+    setNewBankName("");
+    setNewBankStart("");
+    setNewBankError("");
+    setShowAddBankForm(true);
+  }
+
+  function handleSaveNewBank() {
+    if (!newBankName.trim()) {
+      setNewBankError("請輸入銀行帳戶名稱");
+      return;
+    }
+    const id = `custom_bank_${Date.now()}`;
+    const start = newBankStart ? parseFloat(newBankStart) : 0;
+    setCustomAccounts((prev) => [...prev, { id, label: newBankName.trim(), start }]);
+    setShowAddBankForm(false);
+    setBankSectionOpen(true);
   }
 
   function handleSaveAcctStart() {
@@ -1284,13 +1340,14 @@ export default function App() {
   }
 
   async function handleClearAllData() {
-    const snapshot = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, clearedAt: new Date().toISOString() };
+    const snapshot = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, customAccounts, clearedAt: new Date().toISOString() };
     try { await storage.set(PRECLEAR_KEY, JSON.stringify(snapshot)); } catch (e) { /* 備份失敗也繼續清除 */ }
     setPreClearBackup(snapshot);
     setTransactions([]);
     setHoldings([]);
     setCustomCategories([]);
     setBudgetLimits([]);
+    setCustomAccounts([]);
     setAccountStartBalances(Object.fromEntries(Object.keys(ACCOUNT_META).map((id) => [id, 0])));
     setGoals([]);
     setChatMessages([]);
@@ -1310,12 +1367,13 @@ export default function App() {
     setGoals(Array.isArray(preClearBackup.goals) ? preClearBackup.goals : []);
     setChatMessages(Array.isArray(preClearBackup.chatMessages) ? preClearBackup.chatMessages : []);
     setProjects(Array.isArray(preClearBackup.projects) ? preClearBackup.projects : []);
+    setCustomAccounts(Array.isArray(preClearBackup.customAccounts) ? preClearBackup.customAccounts : []);
     setPreClearBackup(null);
     try { await storage.delete(PRECLEAR_KEY); } catch (e) { /* 忽略 */ }
   }
 
   function handleExportBackup() {
-    const payload = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, exportedAt: new Date().toISOString() };
+    const payload = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, customAccounts, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1357,6 +1415,7 @@ export default function App() {
     setGoals(Array.isArray(data.goals) ? data.goals : []);
     setChatMessages(Array.isArray(data.chatMessages) ? data.chatMessages : []);
     setProjects(Array.isArray(data.projects) ? data.projects : []);
+    setCustomAccounts(Array.isArray(data.customAccounts) ? data.customAccounts : []);
     setLastBackupAt(data.exportedAt || new Date().toISOString());
     setLedgerPage(0);
     setImportPreview(null);
@@ -1539,7 +1598,7 @@ export default function App() {
       if (progress) parts.push(`目前進度約 ${progress.pct}%`);
       return parts.join("，");
     }).join("\n") || "使用者目前沒有設定任何目標";
-    const acctLines = Object.entries(ACCOUNT_META).map(([id, meta]) => `${meta.label} NT$${fmt(accountBalances[id] || 0)}`).join("、");
+    const acctLines = Object.entries(ALL_ACCOUNTS).map(([id, meta]) => `${meta.label} NT$${fmt(accountBalances[id] || 0)}`).join("、");
 
     return (
       `你是使用者記帳 App 裡的財務小幫手，用溫暖、實際、簡短口語的中文回覆，像朋友一樣給回饋和提醒，不要長篇大論，重點清楚就好，可以適時給具體建議或提醒風險，但不要用条列式的財經術語轟炸使用者。\n` +
@@ -1867,6 +1926,7 @@ export default function App() {
           padding: 18px 18px 24px;
           max-height: 88%; overflow-y: auto;
           animation: fp-slide-up 0.25s ease-out;
+          scroll-padding-top: 90px;
         }
         @keyframes fp-slide-up { from { transform: translateY(100%);} to { transform: translateY(0);} }
         .fp-segmented { display: flex; background: #e6ded0; border-radius: 12px; padding: 4px; margin-bottom: 16px; }
@@ -1880,18 +1940,19 @@ export default function App() {
         .fp-amount-input {
           width: 100%; font-size: 30px; font-family: 'JetBrains Mono', monospace; font-weight: 700;
           border: none; background: none; outline: none; color: var(--ink); text-align: center; margin: 6px 0 18px;
+          scroll-margin-top: 90px;
         }
         .fp-field-label { font-size: 12px; color: var(--ink-soft); margin: 14px 0 8px; font-weight: 600; }
         .fp-cat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
         .fp-cat-btn {
-          display: flex; flex-direction: column; align-items: center; gap: 5px;
-          padding: 10px 4px; border-radius: 12px; border: 1.5px solid transparent;
-          background: #fff8ec; cursor: pointer; font-size: 11px; color: var(--ink);
+          display: flex; flex-direction: column; align-items: center; gap: 3px;
+          padding: 6px 4px; border-radius: 10px; border: 1.5px solid transparent;
+          background: #fff8ec; cursor: pointer; font-size: 10px; color: var(--ink);
           font-family: 'Noto Sans TC', sans-serif;
         }
         .fp-cat-btn.selected { border-color: var(--brass); background: var(--brass-soft); }
         .fp-cat-icon-circle {
-          width: 34px; height: 34px; border-radius: 50%;
+          width: 20px; height: 20px; border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
         }
         .fp-acct-chip {
@@ -1903,6 +1964,13 @@ export default function App() {
         .fp-input {
           width: 100%; padding: 10px 12px; border-radius: 10px; border: 1.5px solid #d8d0ba;
           background: #fff8ec; font-size: 14px; font-family: 'Noto Sans TC', sans-serif; color: var(--ink); outline: none;
+        }
+        input[type="date"].fp-input {
+          font-family: -apple-system, BlinkMacSystemFont, 'Noto Sans TC', sans-serif;
+          min-height: 40px;
+          line-height: 20px;
+          -webkit-appearance: none;
+          appearance: none;
         }
         .fp-save-btn {
           width: 100%; margin-top: 20px; padding: 14px 0; border-radius: 14px; border: none;
@@ -1949,10 +2017,6 @@ export default function App() {
                   <div className="fp-cover-name fp-serif">我的帳本</div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button
-                    onClick={() => setShowRecurringList(true)}
-                    style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
-                  ><Repeat size={14} /> 固定收支</button>
                   <button
                     onClick={() => { setProjectDetailId(null); setShowProjectsList(true); }}
                     style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
@@ -2308,14 +2372,15 @@ export default function App() {
 
         {/* ------------------------------------------------------------ */}
         {activeTab === "accounts" && (
-          <div className="fp-body" style={{ paddingTop: 0 }}>
-            <div className="fp-cover" style={{ marginBottom: 16 }}>
+          <>
+            <div className="fp-cover">
               <div className="fp-cover-title fp-serif">總　資　產</div>
               <div className="fp-cover-name fp-serif fp-mono">NT$ {fmt(netWorth)}</div>
             </div>
+            <div className="fp-body" style={{ paddingTop: 16 }}>
             <div className="fp-section-pad" style={{ paddingTop: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)", margin: "0 0 10px" }}>現金</div>
-              {Object.entries(ACCOUNT_META).filter(([, meta]) => meta.group === "cash").map(([id, meta]) => {
+              {Object.entries(ALL_ACCOUNTS).filter(([, meta]) => meta.group === "cash").map(([id, meta]) => {
                 const Icon = meta.icon;
                 const bal = accountBalances[id];
                 return (
@@ -2333,85 +2398,112 @@ export default function App() {
                 );
               })}
 
-              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)", margin: "20px 0 10px" }}>銀行帳戶</div>
-              {Object.entries(ACCOUNT_META).filter(([, meta]) => meta.group === "bank").map(([id, meta]) => {
-                const Icon = meta.icon;
-                const bal = accountBalances[id];
-                return (
-                  <div className="fp-account-row" key={id} onClick={() => openAcctForm(id)} style={{ cursor: "pointer" }}>
-                    <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
-                      <Icon size={17} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{meta.label}</div>
-                    </div>
-                    <div className="fp-mono" style={{ fontWeight: 700, color: bal < 0 ? "var(--seal)" : "var(--ink)" }}>
-                      NT$ {fmt(bal)}
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{ fontSize: 11.5, color: "var(--ink-soft)", textAlign: "center", marginTop: 6 }}>點任一帳戶可調整期初餘額</div>
-
-
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "22px 0 10px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 14, color: "var(--indigo)" }}>
-                  <LineChart size={16} /> 投資組合
-                </div>
+              <div
+                onClick={() => setBankSectionOpen((v) => !v)}
+                style={{ display: "flex", alignItems: "center", gap: 6, margin: "20px 0 10px", cursor: "pointer" }}
+              >
+                {bankSectionOpen ? <ChevronDown size={16} color="var(--indigo)" /> : <ChevronRight size={16} color="var(--indigo)" />}
+                <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)" }}>銀行帳戶</div>
                 <button
-                  onClick={() => openHoldingForm(null)}
-                  style={{ border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", borderRadius: 16, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
-                >+ 新增持股</button>
+                  onClick={(e) => { e.stopPropagation(); openAddBankForm(); }}
+                  style={{ width: 22, height: 22, borderRadius: "50%", border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, flexShrink: 0 }}
+                ><Plus size={13} /></button>
+                <div style={{ flex: 1 }} />
+                <div className="fp-mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+                  {fmt(Object.entries(ALL_ACCOUNTS).filter(([, m]) => m.group === "bank").reduce((a, [id]) => a + (accountBalances[id] || 0), 0))}
+                </div>
+              </div>
+              {bankSectionOpen && (
+                <>
+                  {Object.entries(ALL_ACCOUNTS).filter(([, meta]) => meta.group === "bank").map(([id, meta]) => {
+                    const Icon = meta.icon;
+                    const bal = accountBalances[id];
+                    return (
+                      <div className="fp-account-row" key={id} onClick={() => openAcctForm(id)} style={{ cursor: "pointer" }}>
+                        <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
+                          <Icon size={17} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{meta.label}</div>
+                        </div>
+                        <div className="fp-mono" style={{ fontWeight: 700, color: bal < 0 ? "var(--seal)" : "var(--ink)" }}>
+                          NT$ {fmt(bal)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)", textAlign: "center", marginTop: 6 }}>點任一帳戶可調整期初餘額</div>
+                </>
+              )}
+
+
+              <div
+                onClick={() => setInvestmentSectionOpen((v) => !v)}
+                style={{ display: "flex", alignItems: "center", gap: 6, margin: "22px 0 10px", cursor: "pointer" }}
+              >
+                {investmentSectionOpen ? <ChevronDown size={16} color="var(--indigo)" /> : <ChevronRight size={16} color="var(--indigo)" />}
+                <LineChart size={16} color="var(--indigo)" />
+                <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)" }}>投資組合</div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); openHoldingForm(null); }}
+                  style={{ width: 22, height: 22, borderRadius: "50%", border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, flexShrink: 0 }}
+                ><Plus size={13} /></button>
+                <div style={{ flex: 1 }} />
+                <div className="fp-mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{fmt(portfolioValue)}</div>
               </div>
 
-              {holdings.length > 0 && (
-                <div className="fp-card" style={{ marginBottom: 12 }}>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>股票總市值</div>
-                      <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16 }}>{fmt(portfolioValue)}</div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>總成本</div>
-                      <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16 }}>{fmt(portfolioCost)}</div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>損益</div>
-                      <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16, color: portfolioPL >= 0 ? "var(--jade)" : "var(--seal)" }}>
-                        {portfolioPL >= 0 ? "+" : ""}{fmt(portfolioPL)}
+              {investmentSectionOpen && (
+                <>
+                  {holdings.length > 0 && (
+                    <div className="fp-card" style={{ marginBottom: 12 }}>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>股票總市值</div>
+                          <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16 }}>{fmt(portfolioValue)}</div>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>總成本</div>
+                          <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16 }}>{fmt(portfolioCost)}</div>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>損益</div>
+                          <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16, color: portfolioPL >= 0 ? "var(--jade)" : "var(--seal)" }}>
+                            {portfolioPL >= 0 ? "+" : ""}{fmt(portfolioPL)}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
+                  )}
 
-              {holdings.length === 0 && (
-                <div style={{ color: "var(--ink-soft)", fontSize: 13, padding: "8px 2px" }}>還沒有持股記錄</div>
-              )}
+                  {holdings.length === 0 && (
+                    <div style={{ color: "var(--ink-soft)", fontSize: 13, padding: "8px 2px" }}>還沒有持股記錄</div>
+                  )}
 
-              {holdings.map((h) => {
-                const value = h.shares * h.currentPrice;
-                const cost = h.shares * h.avgCost;
-                const pl = value - cost;
-                const plPct = cost > 0 ? Math.round((pl / cost) * 1000) / 10 : 0;
-                return (
-                  <div className="fp-account-row" key={h.id} onClick={() => openHoldingForm(h)} style={{ cursor: "pointer" }}>
-                    <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
-                      <LineChart size={16} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{h.name} <span style={{ color: "var(--ink-soft)", fontWeight: 400, fontSize: 12 }}>{h.symbol}</span></div>
-                      <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{h.shares} 股 · 均價 {fmt(h.avgCost)}</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div className="fp-mono" style={{ fontWeight: 700 }}>{fmt(value)}</div>
-                      <div className="fp-mono" style={{ fontSize: 11.5, color: pl >= 0 ? "var(--jade)" : "var(--seal)" }}>
-                        {pl >= 0 ? "+" : ""}{fmt(pl)}（{plPct >= 0 ? "+" : ""}{plPct}%）
+                  {holdings.map((h) => {
+                    const value = h.shares * h.currentPrice;
+                    const cost = h.shares * h.avgCost;
+                    const pl = value - cost;
+                    const plPct = cost > 0 ? Math.round((pl / cost) * 1000) / 10 : 0;
+                    return (
+                      <div className="fp-account-row" key={h.id} onClick={() => openHoldingForm(h)} style={{ cursor: "pointer" }}>
+                        <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
+                          <LineChart size={16} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{h.name} <span style={{ color: "var(--ink-soft)", fontWeight: 400, fontSize: 12 }}>{h.symbol}</span></div>
+                          <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{h.shares} 股 · 均價 {fmt(h.avgCost)}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div className="fp-mono" style={{ fontWeight: 700 }}>{fmt(value)}</div>
+                          <div className="fp-mono" style={{ fontSize: 11.5, color: pl >= 0 ? "var(--jade)" : "var(--seal)" }}>
+                            {pl >= 0 ? "+" : ""}{fmt(pl)}（{plPct >= 0 ? "+" : ""}{plPct}%）
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </>
+              )}
 
               {preClearBackup && (
                 <div style={{ background: "var(--brass-soft)", border: "1.5px solid var(--brass)", borderRadius: 14, padding: "12px 14px", marginTop: 20 }}>
@@ -2465,7 +2557,8 @@ export default function App() {
                 style={{ width: "100%", marginTop: 20, padding: "10px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink-soft)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
               >清除所有資料，重新開始</button>
             </div>
-          </div>
+            </div>
+          </>
         )}
 
         {/* ------------------------------------------------------------ */}
@@ -2493,9 +2586,17 @@ export default function App() {
           <div className="fp-overlay" onClick={() => setShowAdd(false)}>
             <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
               <button className="fp-close-btn" onClick={() => setShowAdd(false)}><X size={20} /></button>
-              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 10 }} className="fp-serif">
                 {billMode ? `帳單對照輸入中（已存 ${billSavedCount} 筆）` : "新增一筆記錄"}
               </div>
+              {!billMode && (
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+                  <button
+                    onClick={() => setShowRecurringList(true)}
+                    style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid #d8d0ba", background: "#fff8ec", color: "var(--indigo)", borderRadius: 16, padding: "5px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  ><Repeat size={13} /> 管理固定收支</button>
+                </div>
+              )}
 
               <input
                 type="file"
@@ -2548,7 +2649,7 @@ export default function App() {
                     <div style={{ marginTop: 10 }}>
                       <div className="fp-field-label" style={{ marginTop: 0 }}>帳戶（套用到全部項目）</div>
                       <div style={{ display: "flex", flexWrap: "wrap" }}>
-                        {Object.entries(ACCOUNT_META).map(([id, meta]) => (
+                        {Object.entries(ALL_ACCOUNTS).map(([id, meta]) => (
                           <button key={id} className={`fp-acct-chip ${aiAccountId === id ? "selected" : ""}`} onClick={() => setAiAccountId(id)}>
                             {meta.label}
                           </button>
@@ -2593,12 +2694,12 @@ export default function App() {
                 <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                   <button
                     onClick={() => billCameraInputRef.current && billCameraInputRef.current.click()}
-                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 14, border: "1.5px dashed #c9bfa2", background: "#fff8ec", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
-                  ><Camera size={15} /> 拍照</button>
+                    style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "26px 8px", minHeight: 96, borderRadius: 14, border: "1.5px dashed #c9bfa2", background: "#fff8ec", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  ><Camera size={24} /> 拍照</button>
                   <button
                     onClick={() => billFileInputRef.current && billFileInputRef.current.click()}
-                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 14, border: "1.5px dashed #c9bfa2", background: "#fff8ec", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
-                  ><FileText size={15} /> 上傳電子檔（圖片/PDF）</button>
+                    style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "26px 8px", minHeight: 96, borderRadius: 14, border: "1.5px dashed #c9bfa2", background: "#fff8ec", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  ><FileText size={24} /> 上傳電子檔（圖片/PDF）</button>
                 </div>
               )}
 
@@ -2638,6 +2739,7 @@ export default function App() {
                 placeholder="NT$ 0"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                ref={amountInputRef}
               />
               {formError && <div className="fp-error">{formError}</div>}
 
@@ -2658,25 +2760,23 @@ export default function App() {
                           style={{ position: "absolute", top: 2, right: 4, color: "var(--seal)", fontSize: 13, lineHeight: 1, cursor: "pointer" }}
                         >×</span>
                       )}
-                      <div className="fp-cat-icon-circle" style={{ color, background: bg }}><Icon size={16} /></div>
+                      <div className="fp-cat-icon-circle" style={{ color, background: bg }}><Icon size={10} /></div>
                       {meta.label}
                     </button>
                   );
                 })}
                 <button className="fp-cat-btn" style={{ borderStyle: "dashed", borderColor: "#c9bfa2" }} onClick={() => { setCatLabel(""); setCatIconKey(ICON_OPTIONS[0].key); setCatFormError(""); setShowCatForm(true); }}>
-                  <div className="fp-cat-icon-circle" style={{ color: "var(--ink-soft)", background: "#e6ded0" }}><Plus size={16} /></div>
+                  <div className="fp-cat-icon-circle" style={{ color: "var(--ink-soft)", background: "#e6ded0" }}><Plus size={10} /></div>
                   新增分類
                 </button>
               </div>
 
               <div className="fp-field-label">帳戶</div>
-              <div style={{ display: "flex", flexWrap: "wrap" }}>
-                {Object.entries(ACCOUNT_META).map(([id, meta]) => (
-                  <button key={id} className={`fp-acct-chip ${accountId === id ? "selected" : ""}`} onClick={() => setAccountId(id)}>
-                    {meta.label}
-                  </button>
+              <select className="fp-input" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {Object.entries(ALL_ACCOUNTS).map(([id, meta]) => (
+                  <option key={id} value={id}>{meta.label}</option>
                 ))}
-              </div>
+              </select>
 
               {projects.length > 0 && (
                 <>
@@ -2703,9 +2803,13 @@ export default function App() {
               <div className="fp-field-label">備註（選填）</div>
               <input className="fp-input" placeholder="例如：和朋友聚餐" value={note} onChange={(e) => setNote(e.target.value)} />
 
-              <button className={`fp-save-btn ${stamped ? "stamped" : ""}`} onClick={handleSave}>
+              <button
+                className={`fp-save-btn ${stamped ? "stamped" : ""}`}
+                onClick={handleSave}
+                style={{ position: "sticky", bottom: 8, zIndex: 5, boxShadow: "0 -8px 12px -4px rgba(238,233,221,0.9)" }}
+              >
                 {stamped ? <Check size={18} /> : <ChevronRight size={18} />}
-                {stamped ? "已蓋章記錄" : billMode ? "存這一筆，繼續下一筆" : "蓋章確認"}
+                {stamped ? "已送出" : billMode ? "存這一筆，繼續下一筆" : "送出"}
               </button>
               {billMode && (
                 <button
@@ -2782,7 +2886,7 @@ export default function App() {
                   const bg = txType === "income" ? "var(--jade-soft)" : "var(--seal-soft)";
                   return (
                     <button key={opt.key} className={`fp-cat-btn ${selected ? "selected" : ""}`} onClick={() => setCatIconKey(opt.key)} style={{ padding: "10px 0" }}>
-                      <div className="fp-cat-icon-circle" style={{ color, background: bg }}><Icon size={16} /></div>
+                      <div className="fp-cat-icon-circle" style={{ color, background: bg }}><Icon size={10} /></div>
                     </button>
                   );
                 })}
@@ -2823,7 +2927,7 @@ export default function App() {
                         const selected = newBudgetCategory === k;
                         return (
                           <button key={k} className={`fp-cat-btn ${selected ? "selected" : ""}`} onClick={() => setNewBudgetCategory(k)}>
-                            <div className="fp-cat-icon-circle" style={{ color: "var(--seal)", background: "var(--seal-soft)" }}><Icon size={16} /></div>
+                            <div className="fp-cat-icon-circle" style={{ color: "var(--seal)", background: "var(--seal-soft)" }}><Icon size={10} /></div>
                             {meta.label}
                           </button>
                         );
@@ -2868,7 +2972,7 @@ export default function App() {
             <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
               <button className="fp-close-btn" onClick={() => setShowAcctForm(false)}><X size={20} /></button>
               <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">
-                調整「{editingAcctId ? ACCOUNT_META[editingAcctId].label : ""}」期初餘額
+                調整「{editingAcctId ? ALL_ACCOUNTS[editingAcctId].label : ""}」期初餘額
               </div>
               <div className="fp-field-label">期初餘額</div>
               <input
@@ -2885,6 +2989,24 @@ export default function App() {
               {acctFormError && <div className="fp-error">{acctFormError}</div>}
               <button className="fp-save-btn" onClick={handleSaveAcctStart} style={{ background: "var(--indigo)" }}>
                 <Check size={18} /> 儲存期初餘額
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {showAddBankForm && (
+          <div className="fp-overlay" onClick={() => setShowAddBankForm(false)}>
+            <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+              <button className="fp-close-btn" onClick={() => setShowAddBankForm(false)}><X size={20} /></button>
+              <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 14 }} className="fp-serif">新增銀行帳戶</div>
+              <div className="fp-field-label">帳戶名稱</div>
+              <input className="fp-input" placeholder="例如：新光銀行、街口支付" value={newBankName} onChange={(e) => setNewBankName(e.target.value)} />
+              <div className="fp-field-label">期初餘額（選填）</div>
+              <input className="fp-input" inputMode="decimal" placeholder="0" value={newBankStart} onChange={(e) => setNewBankStart(e.target.value.replace(/[^0-9.\-]/g, ""))} />
+              {newBankError && <div className="fp-error" style={{ marginTop: 12 }}>{newBankError}</div>}
+              <button className="fp-save-btn" onClick={handleSaveNewBank} style={{ background: "var(--indigo)" }}>
+                <Check size={18} /> 新增帳戶
               </button>
             </div>
           </div>
@@ -3300,20 +3422,28 @@ export default function App() {
               <input className="fp-input" inputMode="decimal" placeholder="NT$ 0" value={recurringAmount} onChange={(e) => setRecurringAmount(e.target.value.replace(/[^0-9.]/g, ""))} />
 
               <div className="fp-field-label">分類</div>
-              <select className="fp-input" value={recurringCategory} onChange={(e) => setRecurringCategory(e.target.value)}>
-                {(recurringType === "expense" ? expenseCatKeys : incomeCatKeys).map((k) => (
-                  <option key={k} value={k}>{ALL_CATS[k].label}</option>
-                ))}
-              </select>
+              <div className="fp-cat-grid">
+                {(recurringType === "expense" ? expenseCatKeys : incomeCatKeys).map((k) => {
+                  const meta = ALL_CATS[k];
+                  const Icon = meta.icon;
+                  const selected = recurringCategory === k;
+                  const color = recurringType === "income" ? "var(--jade)" : "var(--seal)";
+                  const bg = recurringType === "income" ? "var(--jade-soft)" : "var(--seal-soft)";
+                  return (
+                    <button key={k} className={`fp-cat-btn ${selected ? "selected" : ""}`} onClick={() => setRecurringCategory(k)}>
+                      <div className="fp-cat-icon-circle" style={{ color, background: bg }}><Icon size={10} /></div>
+                      {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
 
               <div className="fp-field-label">帳戶</div>
-              <div style={{ display: "flex", flexWrap: "wrap" }}>
-                {Object.entries(ACCOUNT_META).map(([id, meta]) => (
-                  <button key={id} className={`fp-acct-chip ${recurringAccountId === id ? "selected" : ""}`} onClick={() => setRecurringAccountId(id)}>
-                    {meta.label}
-                  </button>
+              <select className="fp-input" value={recurringAccountId} onChange={(e) => setRecurringAccountId(e.target.value)}>
+                {Object.entries(ALL_ACCOUNTS).map(([id, meta]) => (
+                  <option key={id} value={id}>{meta.label}</option>
                 ))}
-              </div>
+              </select>
 
               <div className="fp-field-label">每月幾號自動記錄</div>
               <input type="number" min="1" max="28" className="fp-input" value={recurringDay} onChange={(e) => setRecurringDay(e.target.value.replace(/[^0-9]/g, ""))} />
