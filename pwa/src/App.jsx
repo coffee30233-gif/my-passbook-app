@@ -2134,16 +2134,18 @@ export default function App() {
 
         {/* ------------------------------------------------------------ */}
         {activeTab === "analysis" && (
-          <div className="fp-body" style={{ paddingTop: "calc(18px + env(safe-area-inset-top))" }}>
-            <div className="fp-section-pad" style={{ paddingBottom: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)" }}>財務分析</div>
+          <>
+            <div className="fp-cover">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="fp-cover-name fp-serif" style={{ fontSize: 22 }}>財務分析</div>
                 <button
                   onClick={() => setShowAssistant(true)}
-                  style={{ display: "flex", alignItems: "center", gap: 6, border: "1.5px solid var(--seal)", background: "none", color: "var(--seal)", borderRadius: 16, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif", flexShrink: 0 }}
                 ><Sparkles size={14} /> 財務小幫手</button>
               </div>
-
+            </div>
+            <div className="fp-body" style={{ paddingTop: 16 }}>
+            <div className="fp-section-pad" style={{ paddingTop: 0, paddingBottom: 0 }}>
               <div className="fp-card">
                 <div className="fp-card-title">目標進度</div>
                 {goals.length === 0 ? (
@@ -2308,20 +2310,24 @@ export default function App() {
                 )}
               </div>
             </div>
-          </div>
+            </div>
+          </>
         )}
 
         {/* ------------------------------------------------------------ */}
         {activeTab === "budget" && (
-          <div className="fp-body" style={{ paddingTop: "calc(18px + env(safe-area-inset-top))" }}>
-            <div className="fp-section-pad" style={{ paddingBottom: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)" }}>預算控管</div>
+          <>
+            <div className="fp-cover">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="fp-cover-name fp-serif" style={{ fontSize: 22 }}>預算控管</div>
                 <button
                   onClick={openAddBudgetForm}
-                  style={{ border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", borderRadius: 16, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif", flexShrink: 0 }}
                 >+ 新增預算項目</button>
               </div>
+            </div>
+            <div className="fp-body" style={{ paddingTop: 16 }}>
+            <div className="fp-section-pad" style={{ paddingTop: 0, paddingBottom: 0 }}>
               <div className="fp-card">
                 <div className="fp-card-title">本月預算總覽</div>
                 {(() => {
@@ -2370,7 +2376,8 @@ export default function App() {
               })}
               <div style={{ fontSize: 11.5, color: "var(--ink-soft)", textAlign: "center", marginTop: 6 }}>點任一分類可調整預算金額</div>
             </div>
-          </div>
+            </div>
+          </>
         )}
 
         {/* ------------------------------------------------------------ */}
