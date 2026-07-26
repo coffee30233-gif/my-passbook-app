@@ -1682,7 +1682,15 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
-        html, body, #root {
+        html {
+          height: auto;
+          min-height: calc(100% + env(safe-area-inset-top));
+          margin: 0;
+          overflow: hidden;
+          overscroll-behavior-y: none;
+          background: #EEE9DD;
+        }
+        body, #root {
           height: 100%;
           margin: 0;
           overflow: hidden;
@@ -1734,16 +1742,15 @@ export default function App() {
           .fp-root {
             padding: 0;
             background: var(--paper);
-            min-height: 100vh;
-            min-height: 100dvh;
+            height: 100%;
+            min-height: 0;
           }
           .fp-phone {
             max-width: 100%;
             border-radius: 0;
             border: none;
             box-shadow: none;
-            height: 100vh;
-            height: 100dvh;
+            height: 100%;
           }
         }
         .fp-mono { font-family: 'JetBrains Mono', monospace; }
