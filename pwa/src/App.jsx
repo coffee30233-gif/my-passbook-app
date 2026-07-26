@@ -1720,15 +1720,18 @@ export default function App() {
           .fp-root {
             padding: 0;
             background: var(--paper);
-            position: fixed;
-            inset: 0;
           }
           .fp-phone {
             max-width: 100%;
             border-radius: 0;
             border: none;
             box-shadow: none;
-            height: 100%;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: auto;
           }
         }
         .fp-mono { font-family: 'JetBrains Mono', monospace; }
@@ -1870,7 +1873,7 @@ export default function App() {
           padding: 14px 16px; margin: 12px 18px 4px;
         }
         .fp-levelup-overlay {
-          position: absolute; inset: 0; z-index: 40;
+          position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 40;
           display: flex; align-items: center; justify-content: center;
           background: rgba(38,34,32,0.45);
           animation: fp-fade-in 0.25s ease-out;
@@ -1884,7 +1887,7 @@ export default function App() {
         @keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes fp-pop-in { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .fp-lock-screen {
-          position: absolute; inset: 0; z-index: 100;
+          position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 100;
           display: flex; flex-direction: column; align-items: center; justify-content: center;
           padding: 24px; text-align: center;
           background: linear-gradient(160deg, var(--indigo) 0%, var(--indigo-soft) 100%);
@@ -1917,7 +1920,7 @@ export default function App() {
 
         /* 新增交易 Sheet */
         .fp-overlay {
-          position: absolute; inset: 0; background: rgba(38,34,32,0.5);
+          position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(38,34,32,0.5);
           display: flex; align-items: flex-end; z-index: 20;
         }
         .fp-sheet {
