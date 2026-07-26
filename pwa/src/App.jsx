@@ -1734,27 +1734,16 @@ export default function App() {
           .fp-root {
             padding: 0;
             background: var(--paper);
+            min-height: 100vh;
+            min-height: 100dvh;
           }
           .fp-phone {
             max-width: 100%;
             border-radius: 0;
             border: none;
             box-shadow: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            height: auto;
-          }
-          .fp-tabbar {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-          }
-          .fp-fab {
-            position: fixed;
+            height: 100vh;
+            height: 100dvh;
           }
         }
         .fp-mono { font-family: 'JetBrains Mono', monospace; }
