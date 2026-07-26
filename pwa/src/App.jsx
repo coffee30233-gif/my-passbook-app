@@ -1779,7 +1779,7 @@ export default function App() {
         .fp-body {
           flex: 1;
           overflow-y: auto;
-          padding: 4px 0 calc(90px + env(safe-area-inset-bottom));
+          padding: 4px 0 calc(74px + env(safe-area-inset-bottom));
         }
         .fp-section-pad { padding: 16px 18px; }
 
@@ -1832,7 +1832,7 @@ export default function App() {
           background: var(--paper);
           border-top: 1px solid #d8d0ba;
           display: flex;
-          padding: 8px 6px calc(14px + env(safe-area-inset-bottom));
+          padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
         }
         .fp-tab {
           flex: 1;
@@ -1846,7 +1846,7 @@ export default function App() {
         .fp-tab.active { color: var(--indigo); font-weight: 700; }
         .fp-fab {
           position: absolute;
-          bottom: calc(34px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+          bottom: calc(22px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
           width: 56px; height: 56px; border-radius: 50%;
           background: var(--seal);
           border: 4px solid var(--paper);
