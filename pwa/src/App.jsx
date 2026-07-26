@@ -1733,6 +1733,15 @@ export default function App() {
             bottom: 0;
             height: auto;
           }
+          .fp-tabbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+          }
+          .fp-fab {
+            position: fixed;
+          }
         }
         .fp-mono { font-family: 'JetBrains Mono', monospace; }
         .fp-serif { font-family: 'Noto Serif TC', serif; }
