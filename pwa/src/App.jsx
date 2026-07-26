@@ -78,6 +78,66 @@ function getTreeStageIndex(count) {
   return idx;
 }
 
+/* 每日理財名言，依日期固定挑選，每天顯示同一句、隔天換下一句 */
+const DAILY_QUOTES = [
+  { text: "省一分錢，就是賺一分錢", author: "富蘭克林" },
+  { text: "複利是世界第八大奇蹟", author: "愛因斯坦" },
+  { text: "君子愛財，取之有道", author: "孔子" },
+  { text: "知足者富", author: "老子" },
+  { text: "省下的錢，就是賺到的錢", author: "亨利福特" },
+  { text: "不記帳的人，永遠不知道錢去哪了", author: "理財諺語" },
+  { text: "你存下的第一塊錢，才是真正屬於你的", author: "王永慶" },
+  { text: "小處精算，大處才能成功", author: "稻盛和夫" },
+  { text: "省錢是致富的第一步", author: "查理蒙格" },
+  { text: "貧窮不是罪，但貧窮的習慣是", author: "理財諺語" },
+  { text: "先支付給自己，再花剩下的錢", author: "喬治克拉森" },
+  { text: "如果你不理財，財就不會理你", author: "理財諺語" },
+  { text: "積少成多，聚沙成塔", author: "中國諺語" },
+  { text: "花小錢的習慣，決定花大錢的能力", author: "理財諺語" },
+  { text: "節儉是致富的秘訣", author: "西塞羅" },
+  { text: "每一塊錢都值得被認真對待", author: "洛克菲勒" },
+  { text: "富有不是賺得多，是花得少", author: "理財諺語" },
+  { text: "今天的節制，是明天的自由", author: "理財諺語" },
+  { text: "誰掌握了自己的花費，誰就掌握了自己的人生", author: "理財諺語" },
+  { text: "投資自己，是最好的投資", author: "巴菲特" },
+  { text: "有計畫的花錢，才是真正的富有", author: "理財諺語" },
+  { text: "省下的每一分錢，都是為未來的自己鋪路", author: "理財諺語" },
+];
+
+function getDailyQuote() {
+  const dayIndex = Math.floor(Date.now() / 86400000);
+  return DAILY_QUOTES[dayIndex % DAILY_QUOTES.length];
+}
+
+/* 升級時隨機顯示的趣味鼓勵語 */
+const LEVEL_UP_QUIPS = [
+  "記帳魂上身！",
+  "錢包都在對你微笑",
+  "這樣下去要發財了",
+  "你今天也很棒！",
+  "小富翁養成中",
+  "存錢這件事，你很有天分",
+  "繼續保持，帳本會記得的",
+  "又向財富自由前進一步",
+];
+
+/* 計算連續記帳天數（今天或昨天有記錄才算「連續中」，避免當天還沒記帳就馬上歸零） */
+function computeStreak(transactions) {
+  const days = new Set(transactions.map((t) => t.date));
+  let start = 0;
+  if (!days.has(isoDaysAgo(0))) {
+    if (!days.has(isoDaysAgo(1))) return 0;
+    start = 1;
+  }
+  let streak = 0;
+  let n = start;
+  while (days.has(isoDaysAgo(n))) {
+    streak++;
+    n++;
+  }
+  return streak;
+}
+
 /* 每個階段的樹形資料：樹幹高度、葉叢位置、金幣位置 */
 const TREE_SHAPES = [
   { trunkH: 6,  leaves: [], coins: [] },
@@ -416,7 +476,6 @@ export default function App() {
   const [investmentSectionOpen, setInvestmentSectionOpen] = useState(false);
   const [customAccounts, setCustomAccounts] = useState([]);
   const [showAddBankForm, setShowAddBankForm] = useState(false);
-  const [debugInfo, setDebugInfo] = useState(null);
   const [newBankName, setNewBankName] = useState("");
   const [newBankStart, setNewBankStart] = useState("");
   const [newBankError, setNewBankError] = useState("");
@@ -455,6 +514,7 @@ export default function App() {
   const [lastBackupAt, setLastBackupAt] = useState(null);
   const [totalLoggedCount, setTotalLoggedCount] = useState(0);
   const [levelUpInfo, setLevelUpInfo] = useState(null);
+  const [treePoked, setTreePoked] = useState(false);
   const [backupReminderSnoozedUntil, setBackupReminderSnoozedUntil] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
   const [showImportConfirm, setShowImportConfirm] = useState(false);
@@ -615,6 +675,7 @@ export default function App() {
   const treeStageIndex = useMemo(() => getTreeStageIndex(totalLoggedCount), [totalLoggedCount]);
   const treeStage = TREE_STAGES[treeStageIndex];
   const nextTreeStage = TREE_STAGES[treeStageIndex + 1];
+  const currentStreak = useMemo(() => computeStreak(transactions), [transactions]);
 
   const daysSinceBackup = useMemo(() => {
     if (!lastBackupAt) return Infinity;
@@ -686,47 +747,6 @@ export default function App() {
   useEffect(() => {
     if (ledgerPage > ledgerTotalPages - 1) setLedgerPage(Math.max(0, ledgerTotalPages - 1));
   }, [ledgerTotalPages, ledgerPage]);
-
-  /* 暫時除錯用：量測實際裝置上的視窗與元件尺寸，問題排查完後會移除 */
-  useEffect(() => {
-    function measure() {
-      const testEl = document.createElement("div");
-      testEl.style.cssText = "position:fixed;bottom:0;height:0;padding-bottom:env(safe-area-inset-bottom);visibility:hidden;";
-      document.body.appendChild(testEl);
-      const safeBottom = getComputedStyle(testEl).paddingBottom;
-      document.body.removeChild(testEl);
-
-      const phoneRect = phoneRef.current ? phoneRef.current.getBoundingClientRect() : null;
-      const tabbarEl = document.querySelector(".fp-tabbar");
-      const tabbarRect = tabbarEl ? tabbarEl.getBoundingClientRect() : null;
-
-      setDebugInfo({
-        windowInnerHeight: window.innerHeight,
-        windowInnerWidth: window.innerWidth,
-        visualViewportHeight: window.visualViewport ? Math.round(window.visualViewport.height) : "無",
-        docClientHeight: document.documentElement.clientHeight,
-        screenHeight: window.screen ? window.screen.height : "無",
-        safeAreaBottom: safeBottom,
-        displayMode: window.matchMedia("(display-mode: standalone)").matches ? "standalone" : "browser",
-        phoneTop: phoneRect ? Math.round(phoneRect.top) : "無",
-        phoneBottom: phoneRect ? Math.round(phoneRect.bottom) : "無",
-        phoneHeight: phoneRect ? Math.round(phoneRect.height) : "無",
-        tabbarTop: tabbarRect ? Math.round(tabbarRect.top) : "無",
-        tabbarBottom: tabbarRect ? Math.round(tabbarRect.bottom) : "無",
-        gapBelowTabbar: tabbarRect ? Math.round(window.innerHeight - tabbarRect.bottom) : "無",
-      });
-    }
-    measure();
-    const t1 = setTimeout(measure, 300);
-    const t2 = setTimeout(measure, 1000);
-    window.addEventListener("resize", measure);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(measure, 200); });
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      window.removeEventListener("resize", measure);
-    };
-  }, []);
 
   /* 修正鍵盤彈出時，iOS 會把輸入框推到畫面外的問題：改成主動在欄位所在的捲動容器內定位，而不是依賴瀏覽器自己的捲動行為 */
   useEffect(() => {
@@ -1014,7 +1034,8 @@ export default function App() {
       const oldStage = getTreeStageIndex(prev);
       const newStage = getTreeStageIndex(next);
       if (newStage > oldStage) {
-        setLevelUpInfo({ ...TREE_STAGES[newStage], stageIndex: newStage });
+        const quip = LEVEL_UP_QUIPS[Math.floor(Math.random() * LEVEL_UP_QUIPS.length)];
+        setLevelUpInfo({ ...TREE_STAGES[newStage], stageIndex: newStage, quip });
         setTimeout(() => setLevelUpInfo(null), 3200);
       }
       return next;
@@ -1891,6 +1912,14 @@ export default function App() {
           background: #fff8ec; border: 1px solid #e3d9bd; border-radius: 16px;
           padding: 14px 16px; margin: 12px 18px 4px;
         }
+        .fp-tree-poke { animation: fp-tree-bounce 0.5s ease; }
+        @keyframes fp-tree-bounce {
+          0% { transform: scale(1) rotate(0deg); }
+          30% { transform: scale(1.12) rotate(-4deg); }
+          55% { transform: scale(0.96) rotate(3deg); }
+          75% { transform: scale(1.05) rotate(-2deg); }
+          100% { transform: scale(1) rotate(0deg); }
+        }
         .fp-levelup-overlay {
           position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 40;
           display: flex; align-items: center; justify-content: center;
@@ -2030,19 +2059,6 @@ export default function App() {
       `}</style>
 
       <div className="fp-phone" ref={phoneRef}>
-        {debugInfo && (
-          <div style={{
-            position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
-            background: "rgba(0,0,0,0.88)", color: "#0f0", fontSize: 10, fontFamily: "monospace",
-            padding: "6px 8px", lineHeight: 1.5, pointerEvents: "none",
-          }}>
-            innerH:{debugInfo.windowInnerHeight} innerW:{debugInfo.windowInnerWidth} vvH:{debugInfo.visualViewportHeight} docH:{debugInfo.docClientHeight} scrH:{debugInfo.screenHeight}<br />
-            safeBottom:{debugInfo.safeAreaBottom} mode:{debugInfo.displayMode}<br />
-            phone: top{debugInfo.phoneTop} bottom{debugInfo.phoneBottom} h{debugInfo.phoneHeight}<br />
-            tabbar: top{debugInfo.tabbarTop} bottom{debugInfo.tabbarBottom}<br />
-            <span style={{ color: "#ff0", fontWeight: 700 }}>底部空隙 gapBelowTabbar: {debugInfo.gapBelowTabbar}px</span>
-          </div>
-        )}
         {/* ------------------------------------------------------------ */}
         {activeTab === "ledger" && (
           <>
@@ -2068,28 +2084,49 @@ export default function App() {
               </svg>
             </div>
             <div className="fp-body">
-              <div className="fp-tree-card">
-                <MoneyTreeSVG stageIndex={treeStageIndex} size={84} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>記帳養成</div>
-                  <div className="fp-serif" style={{ fontSize: 17, fontWeight: 700, color: "var(--indigo)" }}>{treeStage.name}</div>
-                  <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 2 }}>{treeStage.desc}</div>
-                  {nextTreeStage ? (
-                    <div style={{ marginTop: 8 }}>
-                      <div className="fp-progress-track" style={{ height: 6 }}>
-                        <div className="fp-progress-fill" style={{
-                          width: `${Math.min(100, Math.round(((totalLoggedCount - treeStage.min) / (nextTreeStage.min - treeStage.min)) * 100))}%`,
-                          background: "var(--jade)",
-                        }} />
-                      </div>
-                      <div style={{ fontSize: 10.5, color: "var(--ink-soft)", marginTop: 4 }}>
-                        再記 {nextTreeStage.min - totalLoggedCount} 筆，長成「{nextTreeStage.name}」
-                      </div>
+              <div className="fp-tree-card" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <div
+                    className={treePoked ? "fp-tree-poke" : ""}
+                    onClick={() => { setTreePoked(true); setTimeout(() => setTreePoked(false), 500); }}
+                    style={{ cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <MoneyTreeSVG stageIndex={treeStageIndex} size={84} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>記帳養成</div>
+                      {currentStreak >= 1 && (
+                        <div style={{ fontSize: 10.5, color: "var(--seal)", fontWeight: 700 }}>🔥 連續 {currentStreak} 天</div>
+                      )}
                     </div>
-                  ) : (
-                    <div style={{ fontSize: 10.5, color: "var(--brass)", marginTop: 8, fontWeight: 700 }}>已經是最高階段了 🎉 已累計 {totalLoggedCount} 筆</div>
-                  )}
+                    <div className="fp-serif" style={{ fontSize: 17, fontWeight: 700, color: "var(--indigo)" }}>{treeStage.name}</div>
+                    <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 2 }}>{treeStage.desc}</div>
+                    {nextTreeStage ? (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="fp-progress-track" style={{ height: 6 }}>
+                          <div className="fp-progress-fill" style={{
+                            width: `${Math.min(100, Math.round(((totalLoggedCount - treeStage.min) / (nextTreeStage.min - treeStage.min)) * 100))}%`,
+                            background: "var(--jade)",
+                          }} />
+                        </div>
+                        <div style={{ fontSize: 10.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                          再記 {nextTreeStage.min - totalLoggedCount} 筆，長成「{nextTreeStage.name}」
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 10.5, color: "var(--brass)", marginTop: 8, fontWeight: 700 }}>已經是最高階段了 🎉 已累計 {totalLoggedCount} 筆</div>
+                    )}
+                  </div>
                 </div>
+                {(() => {
+                  const quote = getDailyQuote();
+                  return (
+                    <div style={{ borderTop: "1px dashed #e3d9bd", paddingTop: 8, fontSize: 11, color: "var(--ink-soft)", fontStyle: "italic" }}>
+                      「{quote.text}」<span style={{ fontStyle: "normal", opacity: 0.75 }}>—— {quote.author}</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {autoAppliedNotice && (
@@ -3651,6 +3688,7 @@ export default function App() {
               <div style={{ fontSize: 12, color: "var(--brass)", fontWeight: 700, marginTop: 6 }}>🎉 恭喜升級</div>
               <div className="fp-serif" style={{ fontSize: 20, fontWeight: 700, color: "var(--indigo)", margin: "4px 0" }}>{levelUpInfo.name}</div>
               <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{levelUpInfo.desc}</div>
+              {levelUpInfo.quip && <div style={{ fontSize: 12.5, color: "var(--seal)", fontWeight: 700, marginTop: 8 }}>「{levelUpInfo.quip}」</div>}
             </div>
           </div>
         )}
