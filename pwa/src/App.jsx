@@ -416,6 +416,7 @@ export default function App() {
   const [investmentSectionOpen, setInvestmentSectionOpen] = useState(false);
   const [customAccounts, setCustomAccounts] = useState([]);
   const [showAddBankForm, setShowAddBankForm] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(null);
   const [newBankName, setNewBankName] = useState("");
   const [newBankStart, setNewBankStart] = useState("");
   const [newBankError, setNewBankError] = useState("");
@@ -686,6 +687,47 @@ export default function App() {
     if (ledgerPage > ledgerTotalPages - 1) setLedgerPage(Math.max(0, ledgerTotalPages - 1));
   }, [ledgerTotalPages, ledgerPage]);
 
+  /* 暫時除錯用：量測實際裝置上的視窗與元件尺寸，問題排查完後會移除 */
+  useEffect(() => {
+    function measure() {
+      const testEl = document.createElement("div");
+      testEl.style.cssText = "position:fixed;bottom:0;height:0;padding-bottom:env(safe-area-inset-bottom);visibility:hidden;";
+      document.body.appendChild(testEl);
+      const safeBottom = getComputedStyle(testEl).paddingBottom;
+      document.body.removeChild(testEl);
+
+      const phoneRect = phoneRef.current ? phoneRef.current.getBoundingClientRect() : null;
+      const tabbarEl = document.querySelector(".fp-tabbar");
+      const tabbarRect = tabbarEl ? tabbarEl.getBoundingClientRect() : null;
+
+      setDebugInfo({
+        windowInnerHeight: window.innerHeight,
+        windowInnerWidth: window.innerWidth,
+        visualViewportHeight: window.visualViewport ? Math.round(window.visualViewport.height) : "無",
+        docClientHeight: document.documentElement.clientHeight,
+        screenHeight: window.screen ? window.screen.height : "無",
+        safeAreaBottom: safeBottom,
+        displayMode: window.matchMedia("(display-mode: standalone)").matches ? "standalone" : "browser",
+        phoneTop: phoneRect ? Math.round(phoneRect.top) : "無",
+        phoneBottom: phoneRect ? Math.round(phoneRect.bottom) : "無",
+        phoneHeight: phoneRect ? Math.round(phoneRect.height) : "無",
+        tabbarTop: tabbarRect ? Math.round(tabbarRect.top) : "無",
+        tabbarBottom: tabbarRect ? Math.round(tabbarRect.bottom) : "無",
+        gapBelowTabbar: tabbarRect ? Math.round(window.innerHeight - tabbarRect.bottom) : "無",
+      });
+    }
+    measure();
+    const t1 = setTimeout(measure, 300);
+    const t2 = setTimeout(measure, 1000);
+    window.addEventListener("resize", measure);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(measure, 200); });
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
   /* 修正鍵盤彈出時，iOS 會把輸入框推到畫面外的問題：改成主動在欄位所在的捲動容器內定位，而不是依賴瀏覽器自己的捲動行為 */
   useEffect(() => {
     function handleFocusIn(e) {
@@ -703,34 +745,6 @@ export default function App() {
     }
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, []);
-
-  /* 直接用 JS 量測、寫死成行內 px 高度，繞過所有 CSS vh/dvh/百分比計算，避免 iOS 獨立模式的算圖誤差 */
-  useEffect(() => {
-    function applyExactHeight() {
-      if (!phoneRef.current) return;
-      if (window.matchMedia("(max-width: 480px)").matches) {
-        const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-        phoneRef.current.style.height = `${h}px`;
-      } else {
-        phoneRef.current.style.height = "";
-      }
-    }
-    applyExactHeight();
-    const recalc = () => { applyExactHeight(); setTimeout(applyExactHeight, 50); setTimeout(applyExactHeight, 300); };
-    window.addEventListener("resize", recalc);
-    window.addEventListener("orientationchange", recalc);
-    window.addEventListener("pageshow", recalc);
-    window.addEventListener("focus", recalc);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) recalc(); });
-    if (window.visualViewport) window.visualViewport.addEventListener("resize", recalc);
-    return () => {
-      window.removeEventListener("resize", recalc);
-      window.removeEventListener("orientationchange", recalc);
-      window.removeEventListener("pageshow", recalc);
-      window.removeEventListener("focus", recalc);
-      if (window.visualViewport) window.visualViewport.removeEventListener("resize", recalc);
-    };
   }, []);
 
   useEffect(() => {
@@ -2020,6 +2034,19 @@ export default function App() {
       `}</style>
 
       <div className="fp-phone" ref={phoneRef}>
+        {debugInfo && (
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.88)", color: "#0f0", fontSize: 10, fontFamily: "monospace",
+            padding: "6px 8px", lineHeight: 1.5, pointerEvents: "none",
+          }}>
+            innerH:{debugInfo.windowInnerHeight} innerW:{debugInfo.windowInnerWidth} vvH:{debugInfo.visualViewportHeight} docH:{debugInfo.docClientHeight} scrH:{debugInfo.screenHeight}<br />
+            safeBottom:{debugInfo.safeAreaBottom} mode:{debugInfo.displayMode}<br />
+            phone: top{debugInfo.phoneTop} bottom{debugInfo.phoneBottom} h{debugInfo.phoneHeight}<br />
+            tabbar: top{debugInfo.tabbarTop} bottom{debugInfo.tabbarBottom}<br />
+            <span style={{ color: "#ff0", fontWeight: 700 }}>底部空隙 gapBelowTabbar: {debugInfo.gapBelowTabbar}px</span>
+          </div>
+        )}
         {/* ------------------------------------------------------------ */}
         {activeTab === "ledger" && (
           <>
