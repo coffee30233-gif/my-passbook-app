@@ -390,7 +390,7 @@ function generateSeedHoldings() {
 /* ---------------------------------------------------------------------
    主元件
 --------------------------------------------------------------------- */
-export default function App() {
+export default function App({ accessToken }) {
   const [loaded, setLoaded] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [holdings, setHoldings] = useState([]);
@@ -594,13 +594,13 @@ export default function App() {
    * 雲端新增的資料拉進來、併入本機清單，之後就跟手動記的資料一樣，
    * 走原本的本機儲存流程，不會每次操作都打 API。 */
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !accessToken) return;
     (async () => {
       try {
         const sinceRes = await storage.get(CLOUD_SYNC_KEY);
         const since = sinceRes && sinceRes.value ? sinceRes.value : "";
         const url = "/api/transactions" + (since ? `?since=${encodeURIComponent(since)}` : "");
-        const res = await fetch(url);
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!res.ok) return;
         const data = await res.json();
         const rows = Array.isArray(data.transactions) ? data.transactions : [];
@@ -625,7 +625,7 @@ export default function App() {
         console.error("雲端交易同步失敗", e);
       }
     })();
-  }, [loaded]);
+  }, [loaded, accessToken]);
 
   /* 寫入持久化資料 */
   useEffect(() => {

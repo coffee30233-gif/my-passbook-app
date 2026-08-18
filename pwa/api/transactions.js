@@ -1,16 +1,19 @@
 // Vercel Serverless Function：交易紀錄的雲端讀寫端點。
 //
-// GET 不需要驗證——這個 App 本來就沒有任何登入機制（資料本來就是誰有網址
-// 誰都看得到），讀取權限並沒有比現況更寬鬆，App 自己開啟時會呼叫這個
-// 端點把雲端新增的交易拉回本機（見 src/App.jsx）。
+// GET 需要帶 App 登入後拿到的 Supabase session token（Authorization: Bearer
+// <access_token>），驗證這個 token 屬於 OWNER_EMAIL 這個帳號才放行——App 本身
+// 開啟時會自動帶上（見 src/App.jsx、src/LoginGate.jsx）。在這之前 GET 完全不
+// 需要驗證，等於誰有網址就能看到所有交易紀錄，這裡補上去才是真正擋資料外洩
+// 的地方（前端的登入畫面只是擋住看得到的畫面，擋不住直接打 API）。
 //
-// POST 需要帶正確的 X-Api-Secret 標頭才能新增交易——這是加了「寫入」能力
-// 之後才出現的新風險（外部呼叫者可能塞假交易進來），所以只在這裡把關。
-// Lynn's Agents 的管帳助理會用這把金鑰呼叫這個端點。
+// POST 需要帶正確的 X-Api-Secret 標頭才能新增交易——這是另一條路徑，
+// 給 Lynn's Agents 的管帳助理做伺服器對伺服器呼叫用的，跟上面的 Google
+// 登入無關，維持原樣不變。
 //
 // 部署後記得到 Vercel 專案設定 → Environment Variables，新增：
 // SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY（從 Supabase 專案設定複製）
 // PASSBOOK_API_SECRET（自己取一組夠長的隨機字串，Lynn's Agents 那邊要填一樣的值）
+// OWNER_EMAIL（唯一允許登入查看帳本的 Google 帳號 email）
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -28,6 +31,18 @@ export default async function handler(req, res) {
   const supabase = getClient();
 
   if (req.method === "GET") {
+    const authHeader = req.headers["authorization"] || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData?.user || userData.user.email !== process.env.OWNER_EMAIL) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
     const since = typeof req.query.since === "string" ? req.query.since : null;
     let query = supabase.from("transactions").select("*").order("created_at", { ascending: true });
     if (since) query = query.gt("created_at", since);
