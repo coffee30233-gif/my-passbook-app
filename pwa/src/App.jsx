@@ -376,8 +376,6 @@ const PRECLEAR_KEY = "finance-passbook-preclear-backup";
 // 記錄「上次從雲端拉過多晚的交易」，讓 /api/transactions 的增量同步知道
 // 從哪個時間點之後開始要，避免每次開 App 都把所有雲端資料重新拉一次。
 const CLOUD_SYNC_KEY = "finance-passbook-cloud-sync-at";
-// 記錄「本機交易搬遷到雲端」有沒有做過，避免不小心按兩次造成雲端資料重複。
-const MIGRATED_KEY = "finance-passbook-migrated-at";
 
 function generateSeedHoldings() {
   return [
@@ -526,14 +524,6 @@ export default function App({ accessToken }) {
   const [importError, setImportError] = useState("");
   const importFileInputRef = useRef(null);
 
-  /* 一次性搬遷：把目前手機上的交易上傳到雲端資料庫，讓管帳助理之類的外部
-   * 服務可以讀寫同一份資料。密鑰只在這個表單存在的當下用一次，不會被存
-   * 起來，也不會被打包進程式碼裡。 */
-  const [migrateSecret, setMigrateSecret] = useState("");
-  const [migrating, setMigrating] = useState(false);
-  const [migrateResult, setMigrateResult] = useState("");
-  const [migratedAt, setMigratedAt] = useState(null);
-
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [isListening, setIsListening] = useState(false);
   const [voiceMsg, setVoiceMsg] = useState("");
@@ -581,10 +571,6 @@ export default function App({ accessToken }) {
         const backupRes = await storage.get(PRECLEAR_KEY);
         if (backupRes && backupRes.value) setPreClearBackup(JSON.parse(backupRes.value));
       } catch (e) { /* 沒有備份，忽略 */ }
-      try {
-        const migratedRes = await storage.get(MIGRATED_KEY);
-        if (migratedRes && migratedRes.value) setMigratedAt(migratedRes.value);
-      } catch (e) { /* 忽略 */ }
       setLoaded(true);
     })();
   }, []);
@@ -1540,32 +1526,6 @@ export default function App({ accessToken }) {
     setLastBackupAt(new Date().toISOString());
   }
 
-  /* 一次性把目前手機上的交易上傳到雲端資料庫（見 api/transactions.js 的
-   * bulk 模式）。只會做一次——按過一次之後這個表單會換成「已搬遷」的提示，
-   * 避免不小心按兩次讓雲端資料重複。密鑰只在這次請求裡用，不會被存下來。 */
-  async function handleMigrateToCloud() {
-    if (!migrateSecret.trim() || migrating) return;
-    setMigrating(true);
-    setMigrateResult("");
-    try {
-      const res = await fetch("/api/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Api-Secret": migrateSecret.trim() },
-        body: JSON.stringify({ transactions }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `伺服器回應錯誤（${res.status}）`);
-      const now = new Date().toISOString();
-      setMigratedAt(now);
-      await storage.set(MIGRATED_KEY, now);
-      setMigrateResult(`已上傳 ${data.imported} 筆交易到雲端`);
-      setMigrateSecret("");
-    } catch (e) {
-      setMigrateResult(`上傳失敗：${e.message || "未知錯誤"}`);
-    } finally {
-      setMigrating(false);
-    }
-  }
 
   function handleImportFileChange(e) {
     const file = e.target.files && e.target.files[0];
@@ -2758,34 +2718,13 @@ export default function App({ accessToken }) {
               <input type="file" accept="application/json" ref={importFileInputRef} style={{ display: "none" }} onChange={handleImportFileChange} />
               {importError && <div className="fp-error" style={{ marginTop: 10 }}>{importError}</div>}
 
-              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)", margin: "24px 0 10px" }}>雲端同步</div>
-              {migratedAt ? (
-                <div style={{ background: "var(--jade-soft)", border: "1.5px solid var(--jade)", borderRadius: 14, padding: "12px 14px", fontSize: 12.5 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <ShieldCheck size={16} color="var(--jade)" />
-                    <div style={{ fontWeight: 600 }}>已搬遷本機交易到雲端</div>
-                  </div>
+              <div style={{ background: "var(--jade-soft)", border: "1.5px solid var(--jade)", borderRadius: 14, padding: "12px 14px", fontSize: 12.5, marginTop: 24 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <ShieldCheck size={16} color="var(--jade)" />
+                  <div style={{ fontWeight: 600 }}>已連上雲端同步</div>
                 </div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 }}>
-                    只需要做一次：把目前手機上的交易上傳到雲端資料庫，之後管帳助理新增的交易才能跟這份資料合併顯示。輸入你自己設定的 API 密鑰即可，密鑰不會被儲存。
-                  </div>
-                  <input
-                    type="password"
-                    value={migrateSecret}
-                    onChange={(e) => setMigrateSecret(e.target.value)}
-                    placeholder="貼上 PASSBOOK_API_SECRET"
-                    style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 12, border: "1.5px solid #d8d0ba", fontSize: 13, marginBottom: 8, fontFamily: "'Noto Sans TC', sans-serif" }}
-                  />
-                  <button
-                    onClick={handleMigrateToCloud}
-                    disabled={!migrateSecret.trim() || migrating}
-                    style={{ width: "100%", padding: "10px 0", borderRadius: 14, border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: migrateSecret.trim() && !migrating ? "pointer" : "default", opacity: migrateSecret.trim() && !migrating ? 1 : 0.5, fontFamily: "'Noto Sans TC', sans-serif" }}
-                  >{migrating ? "上傳中…" : "搬遷本機交易到雲端"}</button>
-                  {migrateResult && <div style={{ fontSize: 12, marginTop: 8, color: migrateResult.startsWith("已上傳") ? "var(--jade)" : "var(--seal)" }}>{migrateResult}</div>}
-                </>
-              )}
+                <div style={{ marginTop: 6, color: "var(--ink-soft)" }}>登入後新增／刪除的交易會自動同步，不用再手動搬遷。</div>
+              </div>
 
               <div style={{ fontWeight: 700, fontSize: 14, color: "var(--indigo)", margin: "24px 0 10px" }}>安全性</div>
               {lockEnabled ? (
