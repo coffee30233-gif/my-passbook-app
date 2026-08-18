@@ -6,9 +6,19 @@
 // 需要驗證，等於誰有網址就能看到所有交易紀錄，這裡補上去才是真正擋資料外洩
 // 的地方（前端的登入畫面只是擋住看得到的畫面，擋不住直接打 API）。
 //
-// POST 需要帶正確的 X-Api-Secret 標頭才能新增交易——這是另一條路徑，
-// 給 Lynn's Agents 的管帳助理做伺服器對伺服器呼叫用的，跟上面的 Google
-// 登入無關，維持原樣不變。
+// POST 有兩條路徑都能新增交易：
+// 1. X-Api-Secret 標頭——給 Lynn's Agents 的管帳助理做伺服器對伺服器呼叫用的。
+// 2. Authorization: Bearer <access_token>——App 自己在手機上手動記帳時，
+//    每筆都會即時呼叫這裡同步到雲端，這樣手動記的帳之後也拉得到、換裝置也
+//    看得到同一份（見 src/App.jsx 的 pushTransactionToCloud）。驗證方式跟
+//    GET 一樣，一定要是 OWNER_EMAIL 本人的 token。
+// 兩條路徑寫進去的 source 不同（assistant / manual），方便之後追查來源。
+//
+// DELETE（?id=<交易的雲端 id>）只接受 Authorization: Bearer——刪除本來就是
+// 使用者在 App 上點的動作，沒有「管帳助理刪帳」這種情境，所以不像 POST
+// 一樣需要 X-Api-Secret 這條路。App 本機刪除一筆交易的同時會呼叫這裡把雲端
+// 那份也刪掉（見 src/App.jsx 的 deleteTransactionFromCloud），這個 App 本身
+// 沒有「編輯」交易的功能，只有新增／刪除，所以不需要 PATCH/PUT。
 //
 // 部署後記得到 Vercel 專案設定 → Environment Variables，新增：
 // SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY（從 Supabase 專案設定複製）
@@ -23,6 +33,16 @@ function getClient() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+// GET / DELETE / POST 的 Bearer 路徑共用：確認這個 token 是 OWNER_EMAIL 本人的
+// 有效 Supabase session。
+async function isOwnerToken(req, supabase) {
+  const authHeader = req.headers["authorization"] || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return false;
+  const { data: userData } = await supabase.auth.getUser(token);
+  return !!(userData?.user && userData.user.email === process.env.OWNER_EMAIL);
+}
+
 export default async function handler(req, res) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     res.status(500).json({ error: "伺服器尚未設定 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY" });
@@ -31,14 +51,7 @@ export default async function handler(req, res) {
   const supabase = getClient();
 
   if (req.method === "GET") {
-    const authHeader = req.headers["authorization"] || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!token) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    const { data: userData, error: userError } = await supabase.auth.getUser(token);
-    if (userError || !userData?.user || userData.user.email !== process.env.OWNER_EMAIL) {
+    if (!(await isOwnerToken(req, supabase))) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -58,7 +71,13 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     const secret = req.headers["x-api-secret"];
-    if (!secret || secret !== process.env.PASSBOOK_API_SECRET) {
+    let authMethod = null;
+    if (secret && secret === process.env.PASSBOOK_API_SECRET) {
+      authMethod = "secret";
+    } else if (await isOwnerToken(req, supabase)) {
+      authMethod = "owner";
+    }
+    if (!authMethod) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -115,7 +134,7 @@ export default async function handler(req, res) {
         account_id: accountId || "cash",
         note: note || null,
         project_id: projectId || null,
-        source: "assistant",
+        source: authMethod === "secret" ? "assistant" : "manual",
       })
       .select()
       .single();
@@ -125,6 +144,25 @@ export default async function handler(req, res) {
       return;
     }
     res.status(201).json({ transaction: data });
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    if (!(await isOwnerToken(req, supabase))) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const id = typeof req.query.id === "string" ? req.query.id : null;
+    if (!id) {
+      res.status(400).json({ error: "缺少 id" });
+      return;
+    }
+    const { error } = await supabase.from("transactions").delete().eq("id", id);
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ deleted: true });
     return;
   }
 

@@ -606,18 +606,26 @@ export default function App({ accessToken }) {
         const rows = Array.isArray(data.transactions) ? data.transactions : [];
         if (rows.length === 0) return;
 
-        const newTxs = rows.map((r) => ({
-          id: `cloud-${r.id}`,
-          date: r.date,
-          type: r.type,
-          category: r.category,
-          amount: Number(r.amount),
-          accountId: r.account_id || "cash",
-          note: r.note || "",
-          projectId: r.project_id || null,
-        }));
-        setTransactions((prev) => [...newTxs, ...prev]);
-        bumpTreeGrowth(newTxs.length);
+        setTransactions((prev) => {
+          const existingIds = new Set(prev.map((t) => t.id));
+          // 過濾掉本機已經有的（例如剛剛才由這支裝置自己 push 上雲端、
+          // pushTransactionToCloud 已經把本機那筆的 id 換成 cloud-xxx 了——
+          // 不擋掉的話同一筆交易下次同步就會多長出一筆重複的）。
+          const newTxs = rows
+            .filter((r) => !existingIds.has(`cloud-${r.id}`))
+            .map((r) => ({
+              id: `cloud-${r.id}`,
+              date: r.date,
+              type: r.type,
+              category: r.category,
+              amount: Number(r.amount),
+              accountId: r.account_id || "cash",
+              note: r.note || "",
+              projectId: r.project_id || null,
+            }));
+          if (newTxs.length > 0) bumpTreeGrowth(newTxs.length);
+          return newTxs.length > 0 ? [...newTxs, ...prev] : prev;
+        });
 
         const latest = rows.reduce((max, r) => (r.created_at > max ? r.created_at : max), since || "");
         if (latest) await storage.set(CLOUD_SYNC_KEY, latest);
@@ -626,6 +634,38 @@ export default function App({ accessToken }) {
       }
     })();
   }, [loaded, accessToken]);
+
+  /* 手機（或任何一台裝置）手動記的帳，即時同步一份到雲端——這樣其他裝置
+   * 開啟時（上面那個 useEffect）才拉得到，達成「多裝置看到同一本帳」。
+   * 失敗也沒關係：本機資料已經先存好了（呼叫端會先 setTransactions），
+   * 這裡只是盡量把它也送一份上雲端，離線時就先跳過，之後開啟 App 有網路
+   * 再手動記一次雲端才會補上（沒有離線佇列，這個 App 的使用量不需要）。
+   * 成功的話把本機那筆的 id 換成 cloud-xxx，跟雲端拉回來的格式一致，
+   * 上面的合併去重才認得出「這筆其實已經在本機了」。 */
+  async function pushTransactionToCloud(localId, tx) {
+    if (!accessToken) return;
+    try {
+      const res = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          date: tx.date,
+          type: tx.type,
+          category: tx.category,
+          amount: tx.amount,
+          accountId: tx.accountId,
+          note: tx.note || undefined,
+          projectId: tx.projectId || undefined,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.transaction?.id) return;
+      setTransactions((prev) => prev.map((t) => (t.id === localId ? { ...t, id: `cloud-${data.transaction.id}` } : t)));
+    } catch (e) {
+      console.error("交易同步到雲端失敗（本機紀錄不受影響）", e);
+    }
+  }
 
   /* 寫入持久化資料 */
   useEffect(() => {
@@ -891,6 +931,7 @@ export default function App({ accessToken }) {
 
     if (newTxs.length === 0) return;
     setTransactions((prev) => [...newTxs, ...prev]);
+    newTxs.forEach((t) => pushTransactionToCloud(t.id, t));
     bumpTreeGrowth(newTxs.length);
     setRecurringItems((prev) => prev.map((r) => (updates[r.id] ? { ...r, lastAppliedMonth: updates[r.id] } : r)));
     setAutoAppliedNotice(`已自動記錄 ${appliedCount} 筆固定收支${backfilled ? "（含補記之前錯過的月份）" : ""}`);
@@ -1073,6 +1114,7 @@ export default function App({ accessToken }) {
       note: c.merchant,
     }));
     setTransactions((prev) => [...newTxs, ...prev]);
+    newTxs.forEach((t) => pushTransactionToCloud(t.id, t));
     bumpTreeGrowth(newTxs.length);
     setLedgerPage(0);
     setAiCandidates(null);
@@ -1105,6 +1147,7 @@ export default function App({ accessToken }) {
     }
     const newTx = { id: Date.now(), date, type: txType, category, amount: amt, accountId, note: note.trim(), projectId: projectId || null };
     setTransactions((prev) => [newTx, ...prev]);
+    pushTransactionToCloud(newTx.id, newTx);
     bumpTreeGrowth(1);
     setLedgerPage(0);
     setStamped(true);
@@ -1186,6 +1229,23 @@ export default function App({ accessToken }) {
   function handleDelete(id) {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
     setExpandedId(null);
+    // 只有已經同步過雲端的交易（id 是 cloud-xxx）才需要連雲端那份也刪掉；
+    // 純本機、還沒同步上去的交易本來就沒有雲端副本可刪。
+    if (typeof id === "string" && id.startsWith("cloud-")) {
+      deleteTransactionFromCloud(id.slice("cloud-".length));
+    }
+  }
+
+  async function deleteTransactionFromCloud(cloudId) {
+    if (!accessToken) return;
+    try {
+      await fetch(`/api/transactions?id=${encodeURIComponent(cloudId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch (e) {
+      console.error("雲端刪除失敗（本機已刪除）", e);
+    }
   }
 
   function openHoldingForm(holding) {
