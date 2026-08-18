@@ -658,7 +658,11 @@ export default function App({ accessToken }) {
           projectId: tx.projectId || undefined,
         }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        console.error(`交易同步到雲端失敗（本機紀錄不受影響）：${res.status} ${detail}`);
+        return;
+      }
       const data = await res.json();
       if (!data.transaction?.id) return;
       setTransactions((prev) => prev.map((t) => (t.id === localId ? { ...t, id: `cloud-${data.transaction.id}` } : t)));
