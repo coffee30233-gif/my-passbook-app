@@ -121,9 +121,72 @@ export async function parseStockOverviewFile(file) {
     if (firstCol(rows[i]) >= 0 && textOnly(rows[i])) notes.push(rowText(rows[i]));
   }
 
+  // 6. 股票代號：「交易總覽」只有名稱，代號要從「交易明細」的「名稱／代號」欄對回來
+  const symbols = readSymbolMap(XLSX, wb);
+  for (const item of inventory) item.symbol = symbols[item.name] || "";
+
   return {
     fileName: file.name,
     importedAt: new Date().toISOString(),
-    title, subtitle, summary, stocks, totals, inventory, inventoryTotal, months, notes,
+    title, subtitle, summary, stocks, totals, inventory, inventoryTotal, months, notes, symbols,
   };
+}
+
+export const DETAIL_SHEET = "交易明細";
+
+function readSymbolMap(XLSX, wb) {
+  const ws = wb.Sheets[DETAIL_SHEET];
+  if (!ws) return {};
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: false });
+  const head = rows.findIndex((r) => r.some((v) => str(v) === "名稱") && r.some((v) => str(v) === "代號"));
+  if (head < 0) return {};
+  const nameCol = rows[head].findIndex((v) => str(v) === "名稱");
+  const codeCol = rows[head].findIndex((v) => str(v) === "代號");
+  const map = {};
+  for (const r of rows.slice(head + 1)) {
+    const name = str(r[nameCol]);
+    const code = str(r[codeCol]).toUpperCase();
+    if (name && /^[0-9A-Z]{4,6}$/.test(code) && !map[name]) map[name] = code;
+  }
+  return map;
+}
+
+/* 把 Excel 庫存對到「投資組合」：
+   - 投資組合裡已有同代號（或同名稱）的持股 → 更新股數與成本
+   - 沒有的 → 新增
+   - 之前從 Excel 同步進來、這次庫存已經沒有的 → 移除
+   手動新增、跟 Excel 無關的持股不會被動到。 */
+export function planInventorySync(overview, holdings) {
+  const inventory = ((overview && overview.inventory) || []).filter((i) => i.shares > 0);
+  const matchOf = (item) => holdings.find((h) => (item.symbol && String(h.symbol || "").trim().toUpperCase() === item.symbol) || h.name === item.name);
+  const toHolding = (item, base) => ({
+    ...base,
+    symbol: item.symbol || (base && base.symbol) || "",
+    name: item.name,
+    shares: item.shares,
+    // Excel 的庫存成本含買進手續費，用「庫存成本 ÷ 股數」當均價，總成本才會跟 Excel 對得上
+    avgCost: item.shares > 0 ? item.cost / item.shares : item.avgCost,
+    currentPrice: (base && base.currentPrice) || item.price || item.avgCost,
+    source: "excel",
+  });
+  const updates = [];
+  const adds = [];
+  for (const item of inventory) {
+    const match = matchOf(item);
+    if (match) updates.push({ before: match, after: toHolding(item, match) });
+    else adds.push(toHolding(item, { id: `excel-${item.symbol || item.name}` }));
+  }
+  const keptIds = new Set(updates.map((u) => u.before.id));
+  const removes = holdings.filter((h) => h.source === "excel" && !keptIds.has(h.id));
+  const missingSymbols = inventory.filter((i) => !i.symbol).map((i) => i.name);
+  return { updates, adds, removes, missingSymbols };
+}
+
+export function applyInventorySync(holdings, plan) {
+  const removeIds = new Set(plan.removes.map((h) => h.id));
+  const updated = new Map(plan.updates.map((u) => [u.before.id, u.after]));
+  return [
+    ...holdings.filter((h) => !removeIds.has(h.id)).map((h) => updated.get(h.id) || h),
+    ...plan.adds,
+  ];
 }

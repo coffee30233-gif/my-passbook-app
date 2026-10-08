@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { storage } from "./storage";
-import { parseStockOverviewFile } from "./stockOverview";
+import { parseStockOverviewFile, planInventorySync, applyInventorySync } from "./stockOverview";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar,
   XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
@@ -426,6 +426,11 @@ export default function App({ accessToken }) {
   const [hAvgCost, setHAvgCost] = useState("");
   const [hCurrentPrice, setHCurrentPrice] = useState("");
   const [holdingError, setHoldingError] = useState("");
+  const [holdingLookup, setHoldingLookup] = useState(false);
+  const [quoteUpdating, setQuoteUpdating] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [lastQuoteAt, setLastQuoteAt] = useState(null);
+  const quoteUpdatingRef = useRef(false);
 
   const [txType, setTxType] = useState("expense");
   const [amount, setAmount] = useState("");
@@ -482,6 +487,7 @@ export default function App({ accessToken }) {
   const [stockImporting, setStockImporting] = useState(false);
   const [stockImportError, setStockImportError] = useState("");
   const stockFileInputRef = useRef(null);
+  const [showStockSync, setShowStockSync] = useState(false);
   const [customAccounts, setCustomAccounts] = useState([]);
   const [showAddBankForm, setShowAddBankForm] = useState(false);
   const [newBankName, setNewBankName] = useState("");
@@ -1244,6 +1250,83 @@ export default function App({ accessToken }) {
     }
   }
 
+  /* 台股報價：經由 /api/quotes 向證交所 / 櫃買中心查詢 */
+  async function fetchQuotes(symbols) {
+    const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "登入逾時，請重新整理頁面" : `查詢股價失敗（${res.status}）`);
+    return res.json();
+  }
+
+  function confirmStockSync() {
+    const plan = planInventorySync(stockOverview, holdings);
+    const next = applyInventorySync(holdings, plan);
+    setHoldings(next);
+    setShowStockSync(false);
+    refreshHoldingQuotes(next);
+  }
+
+  async function refreshHoldingQuotes(list = holdings) {
+    if (!accessToken || quoteUpdatingRef.current) return;
+    const symbols = [...new Set(list.map((h) => String(h.symbol || "").trim().toUpperCase()).filter(Boolean))];
+    if (symbols.length === 0) {
+      setQuoteError("持股要填股票代號才能自動更新股價");
+      return;
+    }
+    quoteUpdatingRef.current = true;
+    setQuoteUpdating(true);
+    setQuoteError("");
+    try {
+      const data = await fetchQuotes(symbols);
+      const quotes = data.quotes || {};
+      setHoldings((prev) => prev.map((h) => {
+        const q = quotes[String(h.symbol || "").trim().toUpperCase()];
+        return q ? { ...h, currentPrice: q.price, priceKind: q.priceKind, priceQuotedAt: q.quotedAt } : h;
+      }));
+      setLastQuoteAt(new Date().toISOString());
+      const problems = [...(data.errors || [])];
+      if ((data.notFound || []).length > 0) problems.push(`查不到代號：${data.notFound.join("、")}`);
+      if (problems.length > 0) setQuoteError(problems.join("；"));
+    } catch (e) {
+      setQuoteError(e.message || "查詢股價失敗");
+    } finally {
+      quoteUpdatingRef.current = false;
+      setQuoteUpdating(false);
+    }
+  }
+
+  async function lookupHoldingSymbol() {
+    const symbol = hSymbol.trim().toUpperCase();
+    if (!symbol || !accessToken) return;
+    setHoldingLookup(true);
+    setHoldingError("");
+    try {
+      const data = await fetchQuotes([symbol]);
+      const q = data.quotes && data.quotes[symbol];
+      if (!q) {
+        setHoldingError(`查不到 ${symbol} 的股價，請確認代號`);
+        return;
+      }
+      if (!hName.trim()) setHName(q.name);
+      setHCurrentPrice(String(q.price));
+    } catch (e) {
+      setHoldingError(e.message || "查詢股價失敗");
+    } finally {
+      setHoldingLookup(false);
+    }
+  }
+
+  // 打開「帳戶」或「分析」頁時，股價超過 5 分鐘沒更新就自動抓一次
+  useEffect(() => {
+    if (!loaded || !accessToken) return;
+    if (activeTab !== "accounts" && activeTab !== "analysis") return;
+    if (!holdings.some((h) => String(h.symbol || "").trim())) return;
+    if (lastQuoteAt && Date.now() - new Date(lastQuoteAt).getTime() < 5 * 60 * 1000) return;
+    refreshHoldingQuotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, accessToken, activeTab]);
+
   function openHoldingForm(holding) {
     if (holding) {
       setEditingHoldingId(holding.id);
@@ -1273,7 +1356,12 @@ export default function App({ accessToken }) {
       return;
     }
     if (editingHoldingId) {
-      setHoldings((prev) => prev.map((h) => (h.id === editingHoldingId ? { ...h, symbol: hSymbol.trim(), name: hName.trim(), shares, avgCost, currentPrice } : h)));
+      setHoldings((prev) => prev.map((h) => {
+        if (h.id !== editingHoldingId) return h;
+        const next = { ...h, symbol: hSymbol.trim(), name: hName.trim(), shares, avgCost, currentPrice };
+        if (currentPrice !== h.currentPrice) { delete next.priceKind; delete next.priceQuotedAt; }
+        return next;
+      }));
     } else {
       setHoldings((prev) => [...prev, { id: Date.now(), symbol: hSymbol.trim(), name: hName.trim(), shares, avgCost, currentPrice }]);
     }
@@ -1560,7 +1648,9 @@ export default function App({ accessToken }) {
     setStockImportError("");
     setStockImporting(true);
     try {
-      setStockOverview(await parseStockOverviewFile(file));
+      const overview = await parseStockOverviewFile(file);
+      setStockOverview(overview);
+      if ((overview.inventory || []).some((i) => i.shares > 0)) setShowStockSync(true);
     } catch (err) {
       setStockImportError(err && err.message ? err.message : "讀取 Excel 失敗，請確認檔案沒有損壞");
     } finally {
@@ -2657,6 +2747,14 @@ export default function App({ accessToken }) {
                   onClick={(e) => { e.stopPropagation(); openHoldingForm(null); }}
                   style={{ width: 22, height: 22, borderRadius: "50%", border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, flexShrink: 0 }}
                 ><Plus size={13} /></button>
+                {holdings.length > 0 && (
+                  <button
+                    aria-label="更新股價"
+                    onClick={(e) => { e.stopPropagation(); refreshHoldingQuotes(); }}
+                    disabled={quoteUpdating}
+                    style={{ width: 22, height: 22, borderRadius: "50%", border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, flexShrink: 0 }}
+                  >{quoteUpdating ? <Loader2 size={12} className="fp-spin" /> : <RotateCcw size={12} />}</button>
+                )}
                 <div style={{ flex: 1 }} />
                 <div className="fp-mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{fmt(portfolioValue)}</div>
               </div>
@@ -2697,6 +2795,14 @@ export default function App({ accessToken }) {
                           </div>
                         </div>
                       </div>
+                      <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8 }}>
+                        {quoteUpdating
+                          ? "正在更新股價…"
+                          : lastQuoteAt
+                            ? `股價更新於 ${new Date(lastQuoteAt).toLocaleTimeString("zh-Hant-TW", { hour: "2-digit", minute: "2-digit" })}（盤中約有幾秒延遲）`
+                            : "按 ↻ 可更新股價"}
+                      </div>
+                      {quoteError && <div style={{ fontSize: 11, color: "var(--seal)", marginTop: 4 }}>{quoteError}</div>}
                     </div>
                   )}
 
@@ -2716,7 +2822,7 @@ export default function App({ accessToken }) {
                         </div>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{h.name} <span style={{ color: "var(--ink-soft)", fontWeight: 400, fontSize: 12 }}>{h.symbol}</span></div>
-                          <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{h.shares} 股 · 均價 {fmt(h.avgCost)}</div>
+                          <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{h.shares} 股 · 均價 {fmt(h.avgCost)} · 現價 {h.currentPrice}{h.priceKind && h.priceKind !== "成交價" ? `（${h.priceKind}）` : ""}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div className="fp-mono" style={{ fontWeight: 700 }}>{fmt(value)}</div>
@@ -2900,8 +3006,24 @@ export default function App({ accessToken }) {
                           </div>
                         )}
                         {so.inventory[0] && so.inventory[0].quoteDate && (
-                          <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>報價日期：{so.inventory[0].quoteDate}</div>
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>報價日期：{so.inventory[0].quoteDate}（Excel 裡的價格）</div>
                         )}
+                        {(() => {
+                          const live = so.inventory.filter((i) => i.shares > 0);
+                          const synced = live.length > 0 && live.every((i) => holdings.some((h) => h.source === "excel" && h.name === i.name && h.shares === i.shares));
+                          return synced ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 10, background: "var(--jade-soft)", border: "1.5px solid var(--jade)", fontSize: 12 }}>
+                              <Check size={14} color="var(--jade)" />
+                              <span style={{ flex: 1 }}>已計入總資產，市值會隨股價更新</span>
+                              <button onClick={() => setActiveTab("accounts")} style={{ border: "none", background: "none", color: "var(--indigo)", fontWeight: 600, fontSize: 12, cursor: "pointer", padding: 0, fontFamily: "'Noto Sans TC', sans-serif" }}>看投資組合</button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setShowStockSync(true)}
+                              style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 12, border: "none", background: "var(--indigo)", color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                            ><Wallet size={14} /> 把庫存計入總資產</button>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -3256,6 +3378,63 @@ export default function App({ accessToken }) {
         )}
 
         {/* ------------------------------------------------------------ */}
+        {showStockSync && stockOverview && (() => {
+          const plan = planInventorySync(stockOverview, holdings);
+          const others = holdings.filter((h) => !plan.updates.some((u) => u.before.id === h.id) && !plan.removes.some((r) => r.id === h.id));
+          const needsReimport = !stockOverview.symbols;
+          const line = (h, tag, color) => (
+            <div key={`${tag}-${h.id}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #eee3c8", fontSize: 13 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color, border: `1.5px solid ${color}`, borderRadius: 8, padding: "1px 6px", flexShrink: 0 }}>{tag}</span>
+              <span style={{ flex: 1 }}>{h.name} <span style={{ color: "var(--ink-soft)", fontSize: 11.5 }}>{h.symbol}</span></span>
+              <span className="fp-mono" style={{ fontSize: 12 }}>{fmt(h.shares)} 股</span>
+            </div>
+          );
+          return (
+            <div className="fp-overlay" onClick={() => setShowStockSync(false)}>
+              <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
+                <button className="fp-close-btn" onClick={() => setShowStockSync(false)}><X size={20} /></button>
+                <div style={{ fontWeight: 700, fontSize: 16, textAlign: "center", marginBottom: 6 }} className="fp-serif">把庫存計入總資產</div>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", textAlign: "center", marginBottom: 14 }}>
+                  會放進「帳戶」頁的投資組合，之後市值跟著股價自動更新
+                </div>
+
+                {needsReimport ? (
+                  <div className="fp-error" style={{ marginTop: 0 }}>這份資料是舊版匯入的，沒有股票代號，請按「重新匯入」再選一次 Excel 檔</div>
+                ) : (
+                  <>
+                    {plan.adds.map((h) => line(h, "新增", "var(--jade)"))}
+                    {plan.updates.map((u) => line(u.after, "更新", "var(--indigo)"))}
+                    {plan.removes.map((h) => line(h, "移除", "var(--seal)"))}
+                    {plan.adds.length + plan.updates.length + plan.removes.length === 0 && (
+                      <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>沒有需要變更的持股</div>
+                    )}
+                    {plan.missingSymbols.length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--seal)", marginTop: 8 }}>
+                        找不到代號：{plan.missingSymbols.join("、")}，這幾檔不會自動更新股價
+                      </div>
+                    )}
+                    {others.length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 10, lineHeight: 1.5 }}>
+                        投資組合裡的其他持股不會變動：{others.map((h) => h.name).join("、")}
+                        <br />如果這些是重複或不需要的，可以到「帳戶」頁點該持股刪除，免得總資產重複計算。
+                      </div>
+                    )}
+                    <button
+                      onClick={confirmStockSync}
+                      style={{ width: "100%", marginTop: 16, padding: "12px 0", borderRadius: 14, border: "none", background: "var(--indigo)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                    >確認計入</button>
+                  </>
+                )}
+                <button
+                  onClick={() => setShowStockSync(false)}
+                  style={{ width: "100%", marginTop: 8, padding: "10px 0", borderRadius: 14, border: "1.5px solid #d8d0ba", background: "none", color: "var(--ink-soft)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                >先不要</button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ------------------------------------------------------------ */}
         {showHoldingForm && (
           <div className="fp-overlay" onClick={() => setShowHoldingForm(false)}>
             <div className="fp-sheet" onClick={(e) => e.stopPropagation()}>
@@ -3264,8 +3443,15 @@ export default function App({ accessToken }) {
                 {editingHoldingId ? "編輯持股" : "新增持股"}
               </div>
 
-              <div className="fp-field-label">股票代號（選填）</div>
-              <input className="fp-input" placeholder="例如：2330" value={hSymbol} onChange={(e) => setHSymbol(e.target.value)} />
+              <div className="fp-field-label">股票代號（填了才能自動更新股價）</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="fp-input" style={{ flex: 1 }} placeholder="例如：2330" value={hSymbol} onChange={(e) => setHSymbol(e.target.value)} />
+                <button
+                  onClick={lookupHoldingSymbol}
+                  disabled={!hSymbol.trim() || holdingLookup}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--indigo)", background: "none", color: "var(--indigo)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif", flexShrink: 0, opacity: hSymbol.trim() ? 1 : 0.5 }}
+                >{holdingLookup ? <Loader2 size={14} className="fp-spin" /> : <RotateCcw size={14} />} 查股價</button>
+              </div>
 
               <div className="fp-field-label">股票名稱</div>
               <input className="fp-input" placeholder="例如：台積電" value={hName} onChange={(e) => setHName(e.target.value)} />
@@ -3278,7 +3464,7 @@ export default function App({ accessToken }) {
 
               <div className="fp-field-label">目前股價（每股）</div>
               <input className="fp-input" inputMode="decimal" placeholder="0" value={hCurrentPrice} onChange={(e) => setHCurrentPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
-              <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>目前股價需自行查詢後更新，就像更新存摺一樣</div>
+              <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>有填股票代號的話，打開「帳戶」頁會自動更新股價；也可以按「查股價」立即帶入</div>
 
               {holdingError && <div className="fp-error" style={{ marginTop: 12 }}>{holdingError}</div>}
 
