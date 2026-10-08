@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { storage } from "./storage";
+import { parseStockOverviewFile } from "./stockOverview";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar,
   XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
@@ -477,6 +478,10 @@ export default function App({ accessToken }) {
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [bankSectionOpen, setBankSectionOpen] = useState(false);
   const [investmentSectionOpen, setInvestmentSectionOpen] = useState(false);
+  const [stockOverview, setStockOverview] = useState(null);
+  const [stockImporting, setStockImporting] = useState(false);
+  const [stockImportError, setStockImportError] = useState("");
+  const stockFileInputRef = useRef(null);
   const [customAccounts, setCustomAccounts] = useState([]);
   const [showAddBankForm, setShowAddBankForm] = useState(false);
   const [newBankName, setNewBankName] = useState("");
@@ -557,6 +562,7 @@ export default function App({ accessToken }) {
           setCustomAccounts(Array.isArray(data.customAccounts) ? data.customAccounts : []);
           setPinHash(data.pinHash || null);
           setWebauthnCredentialId(data.webauthnCredentialId || null);
+          setStockOverview(data.stockOverview && typeof data.stockOverview === "object" ? data.stockOverview : null);
         } else {
           setTransactions(generateSeedTransactions());
           setHoldings(generateSeedHoldings());
@@ -662,12 +668,12 @@ export default function App({ accessToken }) {
     if (!loaded) return;
     (async () => {
       try {
-        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, customAccounts }));
+        await storage.set(STORAGE_KEY, JSON.stringify({ transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages: chatMessages.slice(-40), projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, customAccounts, stockOverview }));
       } catch (e) {
         console.error("儲存失敗", e);
       }
     })();
-  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, customAccounts, loaded]);
+  }, [transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, lastBackupAt, backupReminderSnoozedUntil, totalLoggedCount, recurringItems, lockEnabled, pinHash, webauthnCredentialId, customAccounts, stockOverview, loaded]);
 
   /* ------------------------- 衍生計算 ------------------------- */
   const ALL_CATS = useMemo(() => {
@@ -1480,7 +1486,7 @@ export default function App({ accessToken }) {
   }
 
   async function handleClearAllData() {
-    const snapshot = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, customAccounts, clearedAt: new Date().toISOString() };
+    const snapshot = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, customAccounts, stockOverview, clearedAt: new Date().toISOString() };
     try { await storage.set(PRECLEAR_KEY, JSON.stringify(snapshot)); } catch (e) { /* 備份失敗也繼續清除 */ }
     setPreClearBackup(snapshot);
     setTransactions([]);
@@ -1492,6 +1498,7 @@ export default function App({ accessToken }) {
     setGoals([]);
     setChatMessages([]);
     setProjects([]);
+    setStockOverview(null);
     setLedgerPage(0);
     setActiveTab("ledger");
     setShowClearConfirm(false);
@@ -1508,12 +1515,13 @@ export default function App({ accessToken }) {
     setChatMessages(Array.isArray(preClearBackup.chatMessages) ? preClearBackup.chatMessages : []);
     setProjects(Array.isArray(preClearBackup.projects) ? preClearBackup.projects : []);
     setCustomAccounts(Array.isArray(preClearBackup.customAccounts) ? preClearBackup.customAccounts : []);
+    setStockOverview(preClearBackup.stockOverview || null);
     setPreClearBackup(null);
     try { await storage.delete(PRECLEAR_KEY); } catch (e) { /* 忽略 */ }
   }
 
   function handleExportBackup() {
-    const payload = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, customAccounts, exportedAt: new Date().toISOString() };
+    const payload = { transactions, holdings, customCategories, budgetLimits, accountStartBalances, goals, chatMessages, projects, customAccounts, stockOverview, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1545,6 +1553,21 @@ export default function App({ accessToken }) {
     e.target.value = "";
   }
 
+  async function handleStockFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setStockImportError("");
+    setStockImporting(true);
+    try {
+      setStockOverview(await parseStockOverviewFile(file));
+    } catch (err) {
+      setStockImportError(err && err.message ? err.message : "讀取 Excel 失敗，請確認檔案沒有損壞");
+    } finally {
+      setStockImporting(false);
+    }
+  }
+
   function confirmImportBackup() {
     const data = importPreview;
     if (!data) return;
@@ -1557,6 +1580,7 @@ export default function App({ accessToken }) {
     setChatMessages(Array.isArray(data.chatMessages) ? data.chatMessages : []);
     setProjects(Array.isArray(data.projects) ? data.projects : []);
     setCustomAccounts(Array.isArray(data.customAccounts) ? data.customAccounts : []);
+    setStockOverview(data.stockOverview && typeof data.stockOverview === "object" ? data.stockOverview : null);
     setLastBackupAt(data.exportedAt || new Date().toISOString());
     setLedgerPage(0);
     setImportPreview(null);
@@ -2637,6 +2661,22 @@ export default function App({ accessToken }) {
                 <div className="fp-mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{fmt(portfolioValue)}</div>
               </div>
 
+              <div className="fp-account-row" onClick={() => setActiveTab("stocks")} style={{ cursor: "pointer", marginBottom: 12 }}>
+                <div className="fp-tx-icon" style={{ color: "var(--indigo)", background: "var(--brass-soft)", border: "1.5px solid var(--brass)" }}>
+                  <TrendingUp size={16} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>股票交易總覽</div>
+                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{stockOverview ? `已賣出淨賺、庫存與每月交易` : "從 Excel 匯入股票交易紀錄"}</div>
+                </div>
+                {stockOverview && stockOverview.totals && typeof stockOverview.totals.net === "number" && (
+                  <div className="fp-mono" style={{ fontWeight: 700, color: stockOverview.totals.net >= 0 ? "var(--jade)" : "var(--seal)" }}>
+                    {stockOverview.totals.net >= 0 ? "+" : ""}{fmt(stockOverview.totals.net)}
+                  </div>
+                )}
+                <ChevronRight size={16} color="var(--ink-soft)" />
+              </div>
+
               {investmentSectionOpen && (
                 <>
                   {holdings.length > 0 && (
@@ -2755,6 +2795,205 @@ export default function App({ accessToken }) {
         )}
 
         {/* ------------------------------------------------------------ */}
+        {activeTab === "stocks" && (
+          <>
+            <div className="fp-cover">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <button
+                  onClick={() => setActiveTab("accounts")}
+                  style={{ display: "flex", alignItems: "center", border: "none", background: "none", color: "#EFE7D4", padding: 0, cursor: "pointer", flexShrink: 0 }}
+                ><ChevronLeft size={22} /></button>
+                <div className="fp-cover-name fp-serif" style={{ fontSize: 22, flex: 1 }}>股票交易總覽</div>
+                <button
+                  onClick={() => stockFileInputRef.current && stockFileInputRef.current.click()}
+                  disabled={stockImporting}
+                  style={{ display: "flex", alignItems: "center", gap: 5, border: "1.5px solid rgba(239,231,212,0.5)", background: "rgba(255,255,255,0.08)", color: "#EFE7D4", borderRadius: 16, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif", flexShrink: 0 }}
+                >{stockImporting ? <Loader2 size={14} className="fp-spin" /> : <Upload size={14} />} {stockOverview ? "重新匯入" : "匯入 Excel"}</button>
+              </div>
+              {stockOverview && stockOverview.subtitle && (
+                <div style={{ fontSize: 11.5, color: "rgba(239,231,212,0.75)", marginTop: 8 }}>{stockOverview.subtitle}</div>
+              )}
+            </div>
+            <input
+              type="file"
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              ref={stockFileInputRef}
+              style={{ display: "none" }}
+              onChange={handleStockFileChange}
+            />
+            <div className="fp-body" style={{ paddingTop: 16 }}>
+            <div className="fp-section-pad" style={{ paddingTop: 0 }}>
+              {stockImportError && <div className="fp-error" style={{ marginBottom: 12 }}>{stockImportError}</div>}
+
+              {!stockOverview ? (
+                <div className="fp-card" style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
+                    匯入「交易紀錄整理」Excel，就能在這裡查看「交易總覽」分頁的內容
+                  </div>
+                  <button
+                    onClick={() => stockFileInputRef.current && stockFileInputRef.current.click()}
+                    disabled={stockImporting}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 18px", borderRadius: 14, border: "none", background: "var(--indigo)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans TC', sans-serif" }}
+                  >{stockImporting ? <Loader2 size={14} className="fp-spin" /> : <Upload size={14} />} 選擇 Excel 檔</button>
+                </div>
+              ) : (() => {
+                const so = stockOverview;
+                const plColor = (v) => (v > 0 ? "var(--jade)" : v < 0 ? "var(--seal)" : "var(--ink-soft)");
+                const signed = (v) => `${v > 0 ? "+" : ""}${fmt(v)}`;
+                const provided = (so.months || []).filter((m) => typeof m.realized === "number");
+                const missing = (so.months || []).filter((m) => typeof m.realized !== "number");
+                const chartData = (so.months || []).map((m) => ({ name: m.month.slice(2).replace("-", "/"), realized: typeof m.realized === "number" ? m.realized : 0, cumulative: m.cumulative }));
+                return (
+                  <>
+                    <div className="fp-card">
+                      <div className="fp-card-title">{so.title || "我的股票賺賠與庫存"}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        {(so.summary || []).map((s) => {
+                          const isPL = /損益|淨賺/.test(s.label);
+                          return (
+                            <div key={s.label}>
+                              <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{s.label}</div>
+                              <div className="fp-mono" style={{ fontWeight: 700, fontSize: 16, color: isPL ? plColor(s.value) : "var(--ink)" }}>
+                                {isPL ? signed(s.value) : fmt(s.value)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {(so.summary || []).some((s) => s.note) && (
+                        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed #d8d0ba" }}>
+                          {so.summary.filter((s) => s.note).map((s) => (
+                            <div key={s.label} style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 3 }}>{s.note}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {(so.inventory || []).length > 0 && (
+                      <div className="fp-card">
+                        <div className="fp-card-title">目前庫存</div>
+                        {so.inventory.map((h) => {
+                          const pct = h.cost > 0 && typeof h.pl === "number" ? Math.round((h.pl / h.cost) * 1000) / 10 : null;
+                          return (
+                            <div key={h.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #eee3c8" }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 600, fontSize: 14 }}>{h.name}</div>
+                                <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
+                                  {fmt(h.shares)} 股 · 均價 {h.avgCost.toFixed(2)} · 現價 {typeof h.price === "number" ? h.price : "—"}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <div className="fp-mono" style={{ fontWeight: 700 }}>{typeof h.value === "number" ? fmt(h.value) : "—"}</div>
+                                {typeof h.pl === "number" && (
+                                  <div className="fp-mono" style={{ fontSize: 11.5, color: plColor(h.pl) }}>
+                                    {signed(h.pl)}{pct !== null ? `（${pct > 0 ? "+" : ""}${pct}%）` : ""}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {so.inventoryTotal && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, paddingTop: 10 }}>
+                            <span style={{ color: "var(--ink-soft)" }}>合計 {fmt(so.inventoryTotal.shares)} 股 · 成本 {fmt(so.inventoryTotal.cost)}</span>
+                            <span className="fp-mono" style={{ fontWeight: 700, color: plColor(so.inventoryTotal.pl) }}>{signed(so.inventoryTotal.pl)}</span>
+                          </div>
+                        )}
+                        {so.inventory[0] && so.inventory[0].quoteDate && (
+                          <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>報價日期：{so.inventory[0].quoteDate}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {(so.stocks || []).length > 0 && (
+                      <div className="fp-card">
+                        <div className="fp-card-title">每一檔股票已經賺／賠多少</div>
+                        {so.stocks.map((s) => (
+                          <div className="fp-legend-row" key={s.name}>
+                            <div className="fp-legend-label">
+                              {s.name}
+                              <span style={{ fontSize: 11, color: "var(--ink-soft)", marginLeft: 6 }}>
+                                {s.status}{s.shares > 0 ? ` · ${fmt(s.shares)} 股` : ""}
+                              </span>
+                            </div>
+                            <div className="fp-legend-value fp-mono" style={{ color: plColor(s.realized), fontWeight: 700 }}>
+                              {s.result === "尚未賣出" ? "尚未賣出" : signed(s.realized)}
+                            </div>
+                          </div>
+                        ))}
+                        {so.totals && typeof so.totals.net === "number" && (
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #d8d0ba", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                            {[["合計淨賺", so.totals.net], ["賺錢合計", so.totals.gain], ["虧損合計", so.totals.loss]].map(([label, v]) => (
+                              <div key={label}>
+                                <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{label}</div>
+                                <div className="fp-mono" style={{ fontWeight: 700, fontSize: 13.5, color: plColor(v || 0) }}>{signed(v || 0)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {(so.months || []).length > 0 && (
+                      <div className="fp-card">
+                        <div className="fp-card-title">每月已實現損益</div>
+                        <div style={{ width: "100%", height: 190 }}>
+                          <ResponsiveContainer>
+                            <BarChart data={chartData} margin={{ left: -20, right: 4 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#e3d9bd" vertical={false} />
+                              <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#6b6259" }} axisLine={{ stroke: "#d8d0ba" }} tickLine={false} interval="preserveStartEnd" />
+                              <YAxis tick={{ fontSize: 10, fill: "#6b6259" }} axisLine={false} tickLine={false} width={44} />
+                              <Tooltip formatter={(v) => `NT$ ${fmt(v)}`} contentStyle={{ background: "#fff8ec", border: "1px solid #e3d9bd", borderRadius: 8, fontSize: 12 }} />
+                              <ReferenceLine y={0} stroke="#c9bfa2" />
+                              <Bar dataKey="realized" name="已實現損益" radius={[4, 4, 4, 4]}>
+                                {chartData.map((m) => <Cell key={m.name} fill={m.realized >= 0 ? "#2F6F4E" : "#B33A2E"} />)}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div style={{ marginTop: 8 }}>
+                          {so.months.slice().reverse().map((m) => {
+                            const has = typeof m.realized === "number";
+                            return (
+                              <div key={m.month} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #eee3c8", fontSize: 12.5, opacity: has ? 1 : 0.55 }}>
+                                <div className="fp-mono" style={{ width: 62, fontWeight: 600 }}>{m.month}</div>
+                                <div style={{ flex: 1, color: "var(--ink-soft)", fontSize: 11.5 }}>
+                                  {has ? `${m.count} 筆 · 淨收付 ${signed(m.net || 0)}` : m.status}
+                                </div>
+                                <div className="fp-mono" style={{ fontWeight: 700, color: has ? plColor(m.realized) : "var(--ink-soft)" }}>
+                                  {has ? signed(m.realized) : "—"}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8 }}>
+                          已提供 {provided.length} 個月{missing.length > 0 ? `，缺 ${missing.length} 個月（${missing.map((m) => m.month).join("、")}）` : ""}
+                        </div>
+                      </div>
+                    )}
+
+                    {(so.notes || []).length > 0 && (
+                      <div className="fp-card">
+                        <div className="fp-card-title">數字說明</div>
+                        {so.notes.map((n, i) => (
+                          <div key={i} style={{ fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 5, lineHeight: 1.5 }}>・{n}</div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ fontSize: 11, color: "var(--ink-soft)", textAlign: "center", marginTop: 6 }}>
+                      資料來源：{so.fileName}（{so.importedAt ? so.importedAt.slice(0, 10) : ""} 匯入）
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+            </div>
+          </>
+        )}
+
+        {/* ------------------------------------------------------------ */}
         <div className="fp-tabbar">
           <button className={`fp-tab ${activeTab === "ledger" ? "active" : ""}`} onClick={() => setActiveTab("ledger")}>
             <BookOpen size={20} /> 明細
@@ -2766,7 +3005,7 @@ export default function App({ accessToken }) {
           <button className={`fp-tab ${activeTab === "budget" ? "active" : ""}`} onClick={() => setActiveTab("budget")}>
             <Target size={20} /> 預算
           </button>
-          <button className={`fp-tab ${activeTab === "accounts" ? "active" : ""}`} onClick={() => setActiveTab("accounts")}>
+          <button className={`fp-tab ${activeTab === "accounts" || activeTab === "stocks" ? "active" : ""}`} onClick={() => setActiveTab("accounts")}>
             <Wallet size={20} /> 帳戶
           </button>
         </div>
